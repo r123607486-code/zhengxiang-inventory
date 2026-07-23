@@ -18,13 +18,19 @@ svg.icon{width:20px;height:20px;flex-shrink:0;}
 .login-err{color:#b3261e;font-size:13px;margin-top:6px;min-height:18px;}
 
 /* ---------- 主畫面 ---------- */
-header.topbar{background:#fff;padding:14px 18px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10;box-shadow:0 2px 8px rgba(20,20,20,.06);}
-header.topbar img.logo{height:48px;}
-header.topbar .title{font-weight:700;font-size:20px;color:var(--red-dark);flex:1;}
-header.topbar .who{font-size:13px;color:var(--muted);margin-right:8px;}
-header.topbar button.logout{border:1px solid var(--border);background:#fff;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;}
+:root{ --header-h:64px; --nav-h:48px; }
+header.topbar{background:#fff;padding:10px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;position:sticky;top:0;z-index:30;box-shadow:0 2px 8px rgba(20,20,20,.06);}
+header.topbar img.logo{height:40px;flex-shrink:0;}
+header.topbar .title{font-weight:700;font-size:17px;color:var(--red-dark);flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+header.topbar .actions{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;}
+header.topbar .who{font-size:12.5px;color:var(--muted);white-space:nowrap;}
+header.topbar button.logout{border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+@media (max-width:520px){
+  header.topbar .title{font-size:15px;}
+  header.topbar .actions{flex-basis:100%;order:3;justify-content:space-between;}
+}
 
-nav.tabs{display:flex;gap:8px;overflow-x:auto;padding:10px;background:#fff;border-bottom:1px solid var(--border);}
+nav.tabs{display:flex;gap:8px;overflow-x:auto;padding:10px;background:#fff;border-bottom:1px solid var(--border);position:sticky;top:var(--header-h);z-index:25;}
 nav.tabs button{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:20px;padding:9px 16px;font-size:13.5px;line-height:1;cursor:pointer;color:var(--text);white-space:nowrap;}
 nav.tabs button.active{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
 nav.tabs button.active svg.icon{stroke:#fff;}
@@ -32,6 +38,10 @@ nav.tabs button.active svg.icon{stroke:#fff;}
 main{padding:14px;max-width:960px;margin:0 auto;}
 .page{display:none;}
 .page.active{display:block;}
+
+/* 每一頁最上面的搜尋/篩選/統計區塊：固定在頂部，只有下面的清單/表格會捲動（跟S-TEAM那個查詢頁一樣的效果） */
+.page-head{position:sticky;top:calc(var(--header-h) + var(--nav-h));z-index:20;background:var(--bg);padding-top:2px;margin:0 -14px;padding-left:14px;padding-right:14px;}
+.page-head .toolbar:first-child{margin-top:0;}
 
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;}
 .toolbar input[type=text]{flex:1;min-width:160px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:15px;background:#fff;}

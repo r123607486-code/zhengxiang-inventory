@@ -25,9 +25,11 @@
   <header class="topbar">
     <img class="logo" src="正享LOGO.png" alt="正享">
     <div class="title">正享庫存管理系統</div>
-    <span class="who" id="whoLabel"></span>
-    <button class="logout" id="changePwBtn">改密碼</button>
-    <button class="logout" id="logoutBtn">登出</button>
+    <div class="actions">
+      <span class="who" id="whoLabel"></span>
+      <button class="logout" id="changePwBtn">改密碼</button>
+      <button class="logout" id="logoutBtn">登出</button>
+    </div>
   </header>
 
   <nav class="tabs" id="tabs"></nav>
@@ -40,34 +42,38 @@
 
     <!-- 庫存查詢 -->
     <section class="page" id="page-query">
-      <div class="toolbar">
-        <input type="text" id="queryBox" placeholder="輸入規格或型號，例如 215/55">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="queryBox" placeholder="輸入規格或型號，例如 215/55">
+        </div>
+        <div class="chip-row" id="queryBrandChips"></div>
+        <div class="count" id="queryCount"></div>
       </div>
-      <div class="chip-row" id="queryBrandChips"></div>
-      <div class="count" id="queryCount"></div>
       <div id="queryResults"></div>
     </section>
 
     <!-- 庫存總表 -->
     <section class="page" id="page-master">
-      <div class="toolbar">
-        <input type="text" id="masterBox" placeholder="輸入規格或型號篩選">
-        <button id="exportFilteredBtn">匯出目前結果(Excel)</button>
-        <button id="exportAllBtn">匯出完整備份(Excel)</button>
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="masterBox" placeholder="輸入規格或型號篩選">
+          <button id="exportFilteredBtn">匯出目前結果(Excel)</button>
+          <button id="exportAllBtn">匯出完整備份(Excel)</button>
+        </div>
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">顯示超過</span>
+          <select id="expireYearsSelect">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+            <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+          </select>
+          <span style="font-size:13px;color:var(--muted);">年以上之輪胎</span>
+          <button class="primary" id="applyExpireBtn">套用反紅</button>
+          <button id="clearExpireBtn">清除反紅</button>
+        </div>
+        <div class="chip-row" id="masterBrandChips"></div>
+        <div class="count" id="masterCount"></div>
       </div>
-      <div class="toolbar">
-        <span style="font-size:13px;color:var(--muted);">顯示超過</span>
-        <select id="expireYearsSelect">
-          <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
-          <option value="7">7</option><option value="8">8</option><option value="9">9</option>
-        </select>
-        <span style="font-size:13px;color:var(--muted);">年以上之輪胎</span>
-        <button class="primary" id="applyExpireBtn">套用反紅</button>
-        <button id="clearExpireBtn">清除反紅</button>
-      </div>
-      <div class="chip-row" id="masterBrandChips"></div>
-      <div class="count" id="masterCount"></div>
       <div class="table-wrap">
         <table class="grid">
           <thead><tr><th>品牌</th><th>型號</th><th>規格</th><th>總量</th><th>儲位分布</th><th>成本</th><th>生產日期</th><th>備註</th></tr></thead>
@@ -78,11 +84,13 @@
 
     <!-- 進銷貨管理 -->
     <section class="page" id="page-txn">
-      <div class="toolbar">
-        <button class="primary" id="newTxnBtn">+ 新增進貨/銷貨</button>
-        <button id="newItemBtn">+ 新增品項</button>
+      <div class="page-head">
+        <div class="toolbar">
+          <button class="primary" id="newTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="newItemBtn">+ 新增品項</button>
+        </div>
+        <div class="count" id="txnCount"></div>
       </div>
-      <div class="count" id="txnCount"></div>
       <div class="table-wrap">
         <table class="grid">
           <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>操作人員</th><th>操作</th></tr></thead>
@@ -93,9 +101,11 @@
 
     <!-- 儲位管理 -->
     <section class="page" id="page-loc">
-      <div class="toolbar">
-        <input type="text" id="newLocInput" placeholder="新儲位代碼，例如 A左">
-        <button class="primary" id="addLocBtn">新增儲位</button>
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="newLocInput" placeholder="新儲位代碼，例如 A左">
+          <button class="primary" id="addLocBtn">新增儲位</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="grid">
@@ -119,8 +129,10 @@
 
     <!-- 使用者管理 -->
     <section class="page" id="page-users">
-      <div class="toolbar">
-        <button class="primary" id="newUserBtn">+ 新增使用者</button>
+      <div class="page-head">
+        <div class="toolbar">
+          <button class="primary" id="newUserBtn">+ 新增使用者</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="grid">
