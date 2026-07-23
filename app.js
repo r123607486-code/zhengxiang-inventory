@@ -3,14 +3,14 @@
 // Phase 1：登入分權 / 庫存查詢 / 進銷貨管理(手動輸入) / 儲位管理 / 庫存總表 / 使用者管理
 // ============================================================
 
-// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檸年限（1-9年）才會反紅，不再自動顯示。
+// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檻年限（1-9年）才會反紅，不再自動顯示。
 const DEFAULT_BRANDS = [
-  "賣輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
-  "黑獄輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
+  "賽輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
+  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
   "路德斯通ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諾ZESTINO"
 ];
 
-// 小圖示（inline SVG，不需要額外的圖示字體或CDN）
+// 小圖示（inline SVG，不需要額外的圖示字型或CDN）
 const ICONS = {
   query: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   master:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/></svg>',
@@ -43,8 +43,8 @@ function monthsBetween(dateStr){
 }
 
 // 輪胎業界標準的 DOT 製造代碼：4碼數字，前2碼＝第幾週，後2碼＝西元年後兩碼。
-// 例如、2523」＝2023年第25週（約2023/6/19-6/25）。
-// 回傳「距今幾個月」，無法辨識則回傳 null（例如舊資料裡的、826」、4024/125」這類非標準代碼）。
+// 例如「2523」＝2023年第25週（約2023/6/19-6/25）。
+// 回傳「距今幾個月」，無法辨識則回傳 null（例如舊資料裡的「826」「4024/125」這類非標準代碼）。
 function isoWeekToDate(year, week){
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const jan4Day = (jan4.getUTCDay() + 6) % 7; // 週一=0
@@ -61,7 +61,7 @@ function tireCodeMonthsAgo(code){
   const week = Number(m[1]);
   const yy = Number(m[2]);
   if(week < 1 || week > 53) return null;
-  const year = 2000 + yy; // 假設都是西儃2000年後生產
+  const year = 2000 + yy; // 假設都是西元2000年後生產
   if(year < 2015 || year > 2035) return null; // 年份不合理，視為無效代碼
   const d = isoWeekToDate(year, week);
   if(isNaN(d)) return null;
@@ -198,7 +198,7 @@ document.getElementById("dismissBanner").addEventListener("click", ()=>{
   sessionStorage.setItem("backupBannerDismissed_" + todayStr(), "1");
 });
 
-// ---------- 即時資料監聴 ----------
+// ---------- 即時資料監聽 ----------
 function startListeners(){
   db.collection("items").onSnapshot(snap=>{
     itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -252,7 +252,7 @@ function renderQuery(){
 // ============================================================
 // 庫存總表
 // ============================================================
-let masterExpireYears = null; // null=未套用反紅；1-9=套用中的門檸年限
+let masterExpireYears = null; // null=未套用反紅；1-9=套用中的門檻年限
 document.getElementById("masterBox").addEventListener("input", renderMaster);
 document.getElementById("applyExpireBtn").addEventListener("click", ()=>{
   masterExpireYears = Number(document.getElementById("expireYearsSelect").value);
@@ -270,12 +270,12 @@ function renderMaster(){
   if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
 
   document.getElementById("masterCount").textContent = `共 ${list.length} 筆`
-    + (masterExpireYears ? `　（反紅門檸：超過 ${masterExpireYears} 年）` : "");
+    + (masterExpireYears ? `　（反紅門檻：超過 ${masterExpireYears} 年）` : "");
 
   const body = document.getElementById("masterBody");
   body.innerHTML = list.map(it=>{
     // 反紅邏輯：只要某個儲位的生產日期能被解析成合法的4碼DOT代碼（週+年），就直接拿來判斷；
-    // 無法解析（像、926」這目3碼、或格式不對的舊年分代碼）一律當作「無法判定」，不會反紅、不會用猜的。
+    // 無法解析（像「926」這種3碼、或格式不對的舊年分代碼）一律當作「無法判定」，不會反紅、不會用猜的。
     const details = locDetailList(it).map(d=>{
       let expired = false;
       if(masterExpireYears){
@@ -455,7 +455,7 @@ function openTxnModal(){
     <div class="form-row"><label>儲位</label>
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
-    <div class="form-row"><label>生產日期（選填，新進貨可填這批的4碼DOT代碼，例如2523）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
+    <div class="form-row" id="txnProdDateRow"><label>生產日期（選填，這批的4碼DOT代碼，例如2523）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -467,6 +467,14 @@ function openTxnModal(){
     const type = document.getElementById("txnType").value;
     const locSelect = document.getElementById("txnLoc");
     const it = itemsCache.find(i=>i.id===selectedItemId);
+    // 銷貨不用管生產日期，只有進貨才需要填（是設定/更新該儲位生產日期的地方）
+    const prodDateRow = document.getElementById("txnProdDateRow");
+    if(type === "out"){
+      prodDateRow.classList.add("hidden");
+      document.getElementById("txnProdDate").value = "";
+    } else {
+      prodDateRow.classList.remove("hidden");
+    }
     if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; return; }
     if(type === "out"){
       // 銷貨：只能選這個品項「目前實際有庫存」的儲位
@@ -723,7 +731,7 @@ document.getElementById("changePwBtn").addEventListener("click", async ()=>{
   if(oldPw === null) return;
   const newPw = prompt("請輸入新密碼（至少6碼）：");
   if(newPw === null) return;
-  if(!newPw || newPw.length < 6){ alert("新密碼至少要16碼"); return; }
+  if(!newPw || newPw.length < 6){ alert("新密碼至少要6碼"); return; }
   try{
     const email = currentUser.username + "@" + INTERNAL_EMAIL_DOMAIN;
     const cred = firebase.auth.EmailAuthProvider.credential(email, oldPw);
@@ -819,7 +827,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const locs = {};
       if(zongQty > 0){ locs[zongCode] = {qty:zongQty, productionDate:yearRaw}; knownLocationCodes.add(zongCode); }
       if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:yearRaw}; knownLocationCodes.add("屏東"); }
-      const costVal = r["成本(已妗1.25)"];
+      const costVal = r["成本(已套1.25)"];
       newItems.push({
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
         locations: locs, remark: r["備註"] || "",
@@ -956,7 +964,7 @@ async function restoreFullBackup(wb, statusEl){
         loc: r["loc"] || "",
         date: r["date"] || todayStr(),
         operator: r["operator"] || "",
-        editLog: [] // 逐次修改歷程無法透Excel完整保留，還原後重新開始記錄
+        editLog: [] // 逐次修改歷程無法透過Excel完整保留，還原後重新開始記錄
       });
     });
     await batch.commit();
@@ -965,7 +973,7 @@ async function restoreFullBackup(wb, statusEl){
   }
 
   statusEl.textContent = `還原完成！共還原 ${itemRows.length} 筆品項、${locRows.length} 個儲位、${txnRows.length} 筆進出貨紀錄`
-    + `（提醒：每筆紀錄過去的逐次編輯歷程無法透Excel完整保留，但庫存數量、成本、儲位、生產日期都已正確還原）。`;
+    + `（提醒：每筆紀錄過去的逐次編輯歷程無法透過Excel完整保留，但庫存數量、成本、儲位、生產日期都已正確還原）。`;
 }
 
 // ============================================================
