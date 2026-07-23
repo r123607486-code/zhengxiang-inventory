@@ -74,7 +74,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>品牌</th><th>型號</th><th>規格</th><th>總量</th><th>儲位分布</th><th>成本</th><th>生產日期</th><th>備註</th></tr></thead>
+          <thead><tr><th>品牌</th><th>型號</th><th>規格</th><th>總量</th><th>儲位分布（點擊各儲位可調整生產日期／搬倉）</th><th>成本</th><th>備註</th></tr></thead>
           <tbody id="masterBody"></tbody>
         </table>
       </div>
@@ -122,7 +122,7 @@
         <input type="file" id="importFile" accept=".xlsx">
         <button class="primary" id="importBtn">開始匯入</button>
       </div>
-      <div class="count" id="importStatus">這個工具可重複使用，會自動判斷你選的檔案類型：<br>1. 上傳「庫存資料整併結果.xlsx」→ 匯入舊資料整併結果。<br>2. 上傳「庫存總表」頁面匯出的「完整備份_日期.xlsx」→ 完整還原成備份當時的品項、儲位、成本、進出貨紀錄（會先清除目前資料，此動作無法復原，會先跳出確認）。</div>
+      <div class="count" id="importStatus">這個工具可重複使用，會自動判斷你選的檔案類型：<br>1. 上傳「庫存資料整併結果.xlsx」→ 匯入舊資料整併結果。<br>2. 上傳「庫存總表」頁面匯出的「完整備份_日期.xlsx」→ 完整還原成備份當時的品項、儲位（含各儲位自己的生產日期）、成本、進出貨紀錄（會先清除目前資料，此動作無法復原，會先跳出確認）。</div>
     </section>
 
     <!-- 使用者管理 -->

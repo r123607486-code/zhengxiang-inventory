@@ -67,9 +67,12 @@ table.grid th{background:#f7f2ef;text-align:left;padding:8px 10px;border-bottom:
 table.grid td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
 table.grid tr.expire{background:#fdecec;}
 table.grid tr.expire td{color:#a31e22;}
-table.grid td.loc-cell{cursor:pointer;text-decoration:underline dotted;}
-table.grid td.date-cell{cursor:pointer;text-decoration:underline dotted;}
 table.grid td.cost-cell{cursor:pointer;text-decoration:underline dotted;}
+table.grid td.loc-detail-cell{white-space:normal;}
+table.grid .loc-line{cursor:pointer;text-decoration:underline dotted;padding:2px 0;}
+table.grid .loc-line:hover{color:var(--red-dark);}
+table.grid .loc-line.loc-expired{color:#a31e22;font-weight:700;}
+.empty-inline{color:var(--muted);font-size:12px;}
 
 .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:13.5px;}
 

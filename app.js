@@ -68,13 +68,34 @@ function tireCodeMonthsAgo(code){
   const now = new Date();
   return (now.getFullYear() - d.getUTCFullYear()) * 12 + (now.getMonth() - d.getUTCMonth());
 }
+// 儲位資料格式：{ 儲位代碼: {qty, productionDate} }。
+// 為了相容舊資料（早期是 { 儲位代碼: 數量 } 這種純數字格式），一律透過下面兩個函式讀取，
+// 不要直接讀 item.locations[code].qty，避免遇到舊格式就壞掉。
+function locQty(loc){
+  if(loc == null) return 0;
+  if(typeof loc === "object") return Number(loc.qty)||0;
+  return Number(loc)||0;
+}
+function locDate(loc, item){
+  if(loc && typeof loc === "object") return loc.productionDate || null;
+  // 舊格式（純數字）沒有個別儲位的生產日期，退回去看品項本身舊的 productionDate 欄位
+  return (item && item.productionDate) || null;
+}
 function totalQty(item){
   const locs = item.locations || {};
-  return Object.values(locs).reduce((a,b)=>a+(Number(b)||0), 0);
+  return Object.values(locs).reduce((a,b)=>a+locQty(b), 0);
+}
+// 回傳這個品項底下每個有庫存的儲位明細：[{code, qty, date}]，依儲位代碼排序
+function locDetailList(item){
+  const locs = item.locations || {};
+  return Object.entries(locs)
+    .map(([code, v])=>({ code, qty: locQty(v), date: locDate(v, item) }))
+    .filter(l=> l.qty > 0)
+    .sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant"));
 }
 function locSummary(item){
-  const locs = item.locations || {};
-  return Object.entries(locs).filter(([k,v])=>v>0).map(([k,v])=>`${k}×${v}`).join("、") || "-";
+  const list = locDetailList(item);
+  return list.map(l=> `${l.code}×${l.qty}${l.date?`(${l.date})`:""}`).join("、") || "-";
 }
 function escapeHtml(s){
   return (s==null?"":s.toString()).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -253,30 +274,33 @@ function renderMaster(){
 
   const body = document.getElementById("masterBody");
   body.innerHTML = list.map(it=>{
-    // 反紅邏輯：只要 productionDate 能被解析成合法的4碼DOT代碼（週+年），就直接拿來判斷；
+    // 反紅邏輯：只要某個儲位的生產日期能被解析成合法的4碼DOT代碼（週+年），就直接拿來判斷；
     // 無法解析（像、926」這目3碼、或格式不對的舊年分代碼）一律當作「無法判定」，不會反紅、不會用猜的。
-    let expired = false;
-    if(masterExpireYears){
-      const m = tireCodeMonthsAgo(it.productionDate);
-      expired = m !== null && m > masterExpireYears * 12;
-    }
-    return `<tr class="${expired?'expire':''}">
+    const details = locDetailList(it).map(d=>{
+      let expired = false;
+      if(masterExpireYears){
+        const m = tireCodeMonthsAgo(d.date);
+        expired = m !== null && m > masterExpireYears * 12;
+      }
+      return {...d, expired};
+    });
+    const rowExpired = details.some(d=>d.expired);
+    const locHtml = details.length
+      ? details.map(d=>`<div class="loc-line${d.expired?' loc-expired':''}" data-id="${it.id}" data-code="${escapeHtml(d.code)}">${escapeHtml(d.code)}：${d.qty}${d.date?`（${escapeHtml(d.date)}）`:''}</div>`).join("")
+      : `<span class="empty-inline">無庫存</span>`;
+    return `<tr class="${rowExpired?'expire':''}">
       <td>${escapeHtml(it.brand)}</td>
       <td>${escapeHtml(it.model||"")}</td>
       <td>${escapeHtml(it.spec)}</td>
       <td>${totalQty(it)}</td>
-      <td class="loc-cell" data-id="${it.id}">${escapeHtml(locSummary(it))}</td>
+      <td class="loc-detail-cell">${locHtml}</td>
       <td class="cost-cell" data-id="${it.id}">${it.cost!=null?it.cost:"未填"}</td>
-      <td class="date-cell" data-id="${it.id}">${escapeHtml(it.productionDate||"未填")}</td>
       <td>${escapeHtml(it.remark||"")}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="8" class="empty">尚無資料</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">尚無資料</td></tr>`;
 
-  body.querySelectorAll(".loc-cell").forEach(td=>{
-    td.addEventListener("click", ()=> openMoveLocation(td.dataset.id));
-  });
-  body.querySelectorAll(".date-cell").forEach(td=>{
-    td.addEventListener("click", ()=> editProductionDate(td.dataset.id));
+  body.querySelectorAll(".loc-line").forEach(el=>{
+    el.addEventListener("click", ()=> openLocationModal(el.dataset.id, el.dataset.code));
   });
   body.querySelectorAll(".cost-cell").forEach(td=>{
     td.addEventListener("click", ()=> editCost(td.dataset.id));
@@ -285,15 +309,62 @@ function renderMaster(){
   window._masterFilteredList = list;
 }
 
-function editProductionDate(itemId){
+// 點擊某一個儲位明細，開啟「編輯生產日期／搬到其他儲位」視窗
+function openLocationModal(itemId, code){
   const item = itemsCache.find(i=>i.id===itemId);
   if(!item) return;
-  const cur = item.productionDate || "";
-  const input = prompt("輸入輪胎製造代碼（胎壁上4碼DOT代碼，前2碼＝第幾週、後2碼＝西元年後兩碼，例如、2523」＝2023年第25週）。\n只要是正確的4碼格式，「庫存總表」的反紅功能就會自動判斷；格式不對（例如3碼、或有斜線）系統會直接視為無法判定，不會反紅、也不會用猜的。", cur);
-  if(input === null) return; // 取消
-  const val = input.trim();
-  db.collection("items").doc(itemId).update({ productionDate: val || null })
-    .catch(e=>alert("更新失敗："+e.message));
+  const locs = item.locations || {};
+  const cur = locs[code];
+  const qty = locQty(cur);
+  const date = locDate(cur, item) || "";
+  const otherCodes = locationsCache.map(l=>l.code).filter(c=>c!==code);
+
+  const html = `
+    <div class="sheet-head"><h2>儲位管理：${escapeHtml(code)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>目前儲位</label><input type="text" value="${escapeHtml(code)}" disabled></div>
+    <div class="form-row"><label>目前庫存</label><input type="text" value="${qty}" disabled></div>
+    <div class="form-row"><label>生產日期（4碼DOT代碼，例如2523；留空表示未填）</label><input type="text" id="locEditDate" value="${escapeHtml(date)}"></div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
+    <div class="form-row"><label>搬出數量（要搬到別的儲位才填，不搬就留空）</label><input type="number" id="locMoveQty" min="1" max="${qty}"></div>
+    <div class="form-row"><label>搬到哪個儲位（只能選現有儲位）</label>
+      <select id="locMoveTarget"><option value="">請選擇</option>${otherCodes.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="locSaveBtn">儲存</button>
+    </div>`;
+  openModal(html);
+
+  document.getElementById("locSaveBtn").addEventListener("click", ()=>{
+    const newDate = document.getElementById("locEditDate").value.trim();
+    const moveQtyRaw = document.getElementById("locMoveQty").value;
+    const moveTarget = document.getElementById("locMoveTarget").value;
+    const moveQty = moveQtyRaw ? Number(moveQtyRaw) : 0;
+
+    if(moveQty > 0 && !moveTarget){ alert("請選擇要搬到哪個儲位"); return; }
+    if(moveQty > 0 && moveTarget === code){ alert("搬到的儲位不能跟原本一樣"); return; }
+    if(moveQty > qty){ alert("搬出數量不能超過目前庫存"); return; }
+
+    const newLocs = {...(item.locations||{})};
+    const remaining = qty - moveQty;
+    if(remaining <= 0) delete newLocs[code];
+    else newLocs[code] = { qty: remaining, productionDate: newDate || null };
+
+    if(moveQty > 0){
+      const existingTarget = newLocs[moveTarget];
+      const existingQty = locQty(existingTarget);
+      const existingDate = locDate(existingTarget, item);
+      newLocs[moveTarget] = {
+        qty: existingQty + moveQty,
+        // 如果目的地本來就有庫存，維持目的地原本的生產日期（避免混批誤蓋）；沒有的話才套用剛剛輸入的生產日期
+        productionDate: existingDate || newDate || null
+      };
+    }
+
+    db.collection("items").doc(itemId).update({ locations: newLocs })
+      .then(()=>closeModal())
+      .catch(e=>alert("更新失敗："+e.message));
+  });
 }
 
 function editCost(itemId){
@@ -312,24 +383,6 @@ function editCost(itemId){
   db.collection("items").doc(itemId).update({ cost: num }).catch(e=>alert("更新失敗："+e.message));
 }
 
-function openMoveLocation(itemId){
-  const item = itemsCache.find(i=>i.id===itemId);
-  if(!item) return;
-  const locs = item.locations || {};
-  const from = prompt(`目前儲位分布：${locSummary(item)}\n請輸入要搬出的儲位代碼：`);
-  if(from === null) return;
-  if(!(from in locs) || !locs[from]){ alert("這個儲位目前沒有庫存"); return; }
-  const maxQty = locs[from];
-  const qty = Number(prompt(`要從「${from}」搬出多少數量？(最多 ${maxQty})`));
-  if(!qty || qty<=0 || qty>maxQty){ alert("數量不正確"); return; }
-  const to = prompt("要搬到哪一個儲位代碼？");
-  if(!to) return;
-  const newLocs = {...locs};
-  newLocs[from] = maxQty - qty;
-  newLocs[to] = (newLocs[to]||0) + qty;
-  db.collection("items").doc(itemId).update({locations:newLocs});
-}
-
 document.getElementById("exportFilteredBtn").addEventListener("click", ()=>{
   exportItemsToExcel(window._masterFilteredList || [], "庫存總表_篩選結果");
 });
@@ -340,7 +393,7 @@ document.getElementById("exportAllBtn").addEventListener("click", ()=>{
 function exportItemsToExcel(list, filename){
   const rows = list.map(it=>({
     品牌: it.brand, 型號: it.model, 規格: it.spec, 總量: totalQty(it),
-    儲位分布: locSummary(it), 成本: it.cost!=null?it.cost:"", 生產日期: it.productionDate||"", 備註: it.remark||""
+    儲位分布: locSummary(it), 成本: it.cost!=null?it.cost:"", 備註: it.remark||""
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -352,7 +405,7 @@ async function exportFullBackup(){
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemsCache.map(it=>({
     id:it.id, 品牌:it.brand, 型號:it.model, 規格:it.spec, 總量:totalQty(it),
-    儲位分布:locSummary(it), 成本:it.cost!=null?it.cost:"", 生產日期:it.productionDate||"", 備註:it.remark||""
+    儲位分布:locSummary(it), 成本:it.cost!=null?it.cost:"", 備註:it.remark||""
   }))), "品項主檔");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(locationsCache.map(l=>({儲位代碼:l.code}))), "儲位主檔");
   const txnSnap = await db.collection("transactions").get();
@@ -402,7 +455,7 @@ function openTxnModal(){
     <div class="form-row"><label>儲位</label>
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
-    <div class="form-row"><label>生產日期（選填，新進貨可填）</label><input type="date" id="txnProdDate"></div>
+    <div class="form-row"><label>生產日期（選填，新進貨可填這批的4碼DOT代碼，例如2523）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -417,11 +470,11 @@ function openTxnModal(){
     if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; return; }
     if(type === "out"){
       // 銷貨：只能選這個品項「目前實際有庫存」的儲位
-      const stockedLocs = Object.entries(it.locations||{}).filter(([k,v])=>v>0);
+      const stockedLocs = locDetailList(it);
       if(stockedLocs.length === 0){
         locSelect.innerHTML = `<option value="">這個品項目前沒有庫存可以出貨</option>`;
       } else {
-        locSelect.innerHTML = stockedLocs.map(([k,v])=>`<option value="${escapeHtml(k)}">${escapeHtml(k)}（目前${v}）</option>`).join("");
+        locSelect.innerHTML = stockedLocs.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}（目前${l.qty}）</option>`).join("");
       }
     } else {
       // 進貨：可以選任何儲位（含新品項可能要放的新儲位）
@@ -458,7 +511,7 @@ function openTxnModal(){
     if(!loc){ alert("請選擇儲位"); return; }
     if(type === "out"){
       const it = itemsCache.find(i=>i.id===selectedItemId);
-      const avail = (it.locations||{})[loc] || 0;
+      const avail = locQty((it.locations||{})[loc]);
       if(qty > avail){ alert(`這個儲位目前只有 ${avail} 條，不能出貨 ${qty} 條`); return; }
     }
     submitTxn(selectedItemId, type, qty, loc, prodDate);
@@ -470,11 +523,18 @@ async function submitTxn(itemId, type, qty, loc, prodDate){
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const locs = {...(item.locations||{})};
-  const delta = type === "in" ? qty : -qty;
-  locs[loc] = (locs[loc]||0) + delta;
-  const update = {locations: locs};
-  if(type === "in" && prodDate) update.productionDate = prodDate;
-  await itemRef.update(update);
+  const existing = locs[loc];
+  const curQty = locQty(existing);
+  const curDate = locDate(existing, item);
+  if(type === "in"){
+    // 進貨：這是設定/更新該儲位生產日期的地方——有填就用新填的，沒填就維持原本的
+    locs[loc] = { qty: curQty + qty, productionDate: prodDate || curDate || null };
+  } else {
+    const newQty = curQty - qty;
+    if(newQty <= 0) delete locs[loc];
+    else locs[loc] = { qty: newQty, productionDate: curDate };
+  }
+  await itemRef.update({locations: locs});
   await db.collection("transactions").add({
     itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: []
   });
@@ -491,8 +551,13 @@ async function editTxn(txnId){
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const locs = {...(item.locations||{})};
+  const existing = locs[t.loc];
+  const curQty = locQty(existing);
+  const curDate = locDate(existing, item);
   const sign = t.type === "in" ? 1 : -1;
-  locs[t.loc] = (locs[t.loc]||0) + diff*sign;
+  const newLocQty = curQty + diff*sign;
+  if(newLocQty <= 0) delete locs[t.loc];
+  else locs[t.loc] = { qty: newLocQty, productionDate: curDate };
   await itemRef.update({locations: locs});
   await db.collection("transactions").doc(txnId).update({
     qty: newQty,
@@ -510,8 +575,13 @@ async function deleteTxn(txnId){
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const locs = {...(item.locations||{})};
+  const existing = locs[t.loc];
+  const curQty = locQty(existing);
+  const curDate = locDate(existing, item);
   const sign = t.type === "in" ? -1 : 1; // 刪除等於反向沖銷
-  locs[t.loc] = (locs[t.loc]||0) + t.qty*sign;
+  const newLocQty = curQty + t.qty*sign;
+  if(newLocQty <= 0) delete locs[t.loc];
+  else locs[t.loc] = { qty: newLocQty, productionDate: curDate };
   await itemRef.update({locations: locs});
   await db.collection("editLogs").add({
     txnId, action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
@@ -553,7 +623,7 @@ function openNewItemModal(){
     const spec = document.getElementById("newItemSpec").value.trim();
     const remark = document.getElementById("newItemRemark").value.trim();
     if(!spec){ alert("請輸入規格"); return; }
-    await db.collection("items").add({brand, model, spec, remark, locations:{}, productionDate:null, dotVerified:false, cost:null});
+    await db.collection("items").add({brand, model, spec, remark, locations:{}, cost:null});
     closeModal();
   });
 }
@@ -578,9 +648,9 @@ function renderLocations(){
 }
 
 function deleteLocation(locId, code){
-  const blocking = itemsCache.filter(it=> (it.locations||{})[code] > 0);
+  const blocking = itemsCache.filter(it=> locQty((it.locations||{})[code]) > 0);
   if(blocking.length){
-    const detail = blocking.map(it=>`${it.brand} ${it.spec}：${it.locations[code]}`).join("\n");
+    const detail = blocking.map(it=>`${it.brand} ${it.spec}：${locQty(it.locations[code])}`).join("\n");
     alert(`這個儲位還有庫存，無法直接刪除。請先把以下品項搬到其他儲位：\n\n${detail}`);
     return;
   }
@@ -744,14 +814,15 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const zongCode = (r["總倉儲位代碼"] || "總倉(未指定儲位)").toString().trim();
       const zongQty = Number(r["總倉數量"]) || 0;
       const pingQty = Number(r["屏東數量"]) || 0;
+      // 年分是舊資料的整批共用日期，先各自帶到每個儲位上，之後可以在庫存總表逐一點擊修正成正確的批次日期
+      const yearRaw = (r["年分"] || "").toString().trim() || null;
       const locs = {};
-      if(zongQty > 0){ locs[zongCode] = zongQty; knownLocationCodes.add(zongCode); }
-      if(pingQty > 0){ locs["屏東"] = pingQty; knownLocationCodes.add("屏東"); }
+      if(zongQty > 0){ locs[zongCode] = {qty:zongQty, productionDate:yearRaw}; knownLocationCodes.add(zongCode); }
+      if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:yearRaw}; knownLocationCodes.add("屏東"); }
       const costVal = r["成本(已妗1.25)"];
-      const yearRaw = (r["年分"] || "").toString().trim();
       newItems.push({
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
-        locations: locs, productionDate: yearRaw || null, dotVerified: false, remark: r["備註"] || "",
+        locations: locs, remark: r["備註"] || "",
         cost: (costVal === undefined || costVal === null || costVal === "") ? null : Number(costVal)
       });
     });
@@ -764,10 +835,11 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const zongQty = Number(r["總倉數量"]) || 0;
       const pingQty = Number(r["屏東數量"]) || 0;
       const locs = {};
-      if(zongQty > 0){ locs["總倉(未指定儲位)"] = zongQty; knownLocationCodes.add("總倉(未指定儲位)"); }
-      if(pingQty > 0){ locs["屏東"] = pingQty; knownLocationCodes.add("屏東"); }
+      if(zongQty > 0){ locs["總倉(未指定儲位)"] = {qty:zongQty, productionDate:null}; knownLocationCodes.add("總倉(未指定儲位)"); }
+      if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:null}; knownLocationCodes.add("屏東"); }
       newItems.push({
-        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "", locations: locs, productionDate: null, dotVerified: false, remark: r["備註"] || "", cost: null
+        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
+        locations: locs, remark: r["備註"] || "", cost: null
       });
     });
   }
@@ -800,13 +872,14 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
   statusEl.textContent = `匯入完成！共新增 ${newItems.length} 筆品項。可以到「庫存查詢」或「庫存總表」查看。`;
 });
 
-// 把「儲位分布」欄位的顯示文字（例如「A右×4、屏東×2」）還原成 {A右:4, 屏東:2} 這種資料格式
+// 把「儲位分布」欄位的顯示文字（例如「A右×4(2523)、屏東×2」）還原成
+// {A右:{qty:4,productionDate:"2523"}, 屏東:{qty:2,productionDate:null}} 這種資料格式
 function parseLocSummaryText(str){
   const locs = {};
   if(!str || str === "-") return locs;
   str.toString().split("、").forEach(pair=>{
-    const m = /^(.+)×(\d+)$/.exec(pair.trim());
-    if(m) locs[m[1]] = Number(m[2]);
+    const m = /^(.+)×(\d+)(?:\((.+)\))?$/.exec(pair.trim());
+    if(m) locs[m[1]] = { qty: Number(m[2]), productionDate: m[3] || null };
   });
   return locs;
 }
@@ -850,7 +923,6 @@ async function restoreFullBackup(wb, statusEl){
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
         locations: parseLocSummaryText(r["儲位分布"]),
         cost: (r["成本"] === undefined || r["成本"] === null || r["成本"] === "") ? null : Number(r["成本"]),
-        productionDate: r["生產日期"] || null,
         remark: r["備註"] || ""
       });
     });
@@ -884,7 +956,7 @@ async function restoreFullBackup(wb, statusEl){
         loc: r["loc"] || "",
         date: r["date"] || todayStr(),
         operator: r["operator"] || "",
-        editLog: [] // 逐次修改歷程無法透EEEExcel完整保留，還原後重新開始記錄
+        editLog: [] // 逐次修改歷程無法透Excel完整保留，還原後重新開始記錄
       });
     });
     await batch.commit();
