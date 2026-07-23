@@ -39,6 +39,10 @@
       <span>今天是星期五，記得匯出本週資料備份喔。</span>
       <button id="dismissBanner">知道了</button>
     </div>
+    <div class="banner hidden" id="ordersBanner">
+      <span id="ordersBannerText"></span>
+      <button id="dismissOrdersBanner">前往確認</button>
+    </div>
 
     <!-- 庫存查詢 -->
     <section class="page" id="page-query">
@@ -87,12 +91,46 @@
           <button class="primary" id="newTxnBtn">+ 新增進貨/銷貨</button>
           <button id="newItemBtn">+ 新增品項</button>
         </div>
+        <div class="toolbar">
+          <input type="date" id="txnFilterFrom">
+          <span style="font-size:13px;color:var(--muted);">～</span>
+          <input type="date" id="txnFilterTo">
+          <input type="text" id="txnFilterSalesperson" placeholder="篩選業務姓名">
+          <input type="text" id="txnFilterCustomer" placeholder="篩選客戶姓名">
+          <button id="txnFilterClearBtn">清除篩選</button>
+        </div>
         <div class="count" id="txnCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>操作人員</th><th>操作</th></tr></thead>
+          <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
           <tbody id="txnBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨） -->
+    <section class="page" id="page-orders">
+      <div class="page-head">
+        <div class="count" id="ordersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <tbody id="ordersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 我的訂單（員工：查看自己叫貨的狀態與紀錄） -->
+    <section class="page" id="page-myorders">
+      <div class="page-head">
+        <div class="count" id="myOrdersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>品項</th><th>數量</th><th>客戶</th><th>狀態</th></tr></thead>
+          <tbody id="myOrdersBody"></tbody>
         </table>
       </div>
     </section>
@@ -122,7 +160,7 @@
         <input type="file" id="importFile" accept=".xlsx">
         <button class="primary" id="importBtn">開始匯入</button>
       </div>
-      <div class="count" id="importStatus">這個工具可重複使用，會自動判斷你選的檔案類型：<br>1. 上傳「庫存資料整併結果.xlsx」→ 匯入舊資料整併結果。<br>2. 上傳「庫存總表」頁面匯出的「完整備份_日期.xlsx」→ 完整還原成備份當時的品項、儲位（含各儲位自己的生產日期）、成本、進出貨紀錄（會先清除目前資料，此動作無法復原，會先跳出確認）。</div>
+      <div class="count" id="importStatus">這個工具可重複使用，會自動判斷你選的檔案類型：<br>1. 上傳「庫存資料整併結果.xlsx」→ 匯入舊資料整併結果。<br>2. 上傳「庫存總表」頁面匯出的「完整備份_日期.xlsx」→ 完整還原成備份當時的品項、儲位、成本、進出貨紀錄（會先清除目前資料，此動作無法復原，會先跳出確認）。</div>
     </section>
 
     <!-- 使用者管理 -->
