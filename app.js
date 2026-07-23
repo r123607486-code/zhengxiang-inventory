@@ -727,6 +727,13 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, {type:"array"});
 
+  // 自動判斷：如果是「匯出完整備份」產生的檔案（有這三個分頁），走「還原備份」流程；
+  // 否則走原本「舊資料整併結果」的匯入流程。
+  if(wb.Sheets["品項主檔"] && wb.Sheets["儲位主檔"]){
+    await restoreFullBackup(wb, statusEl);
+    return;
+  }
+
   const knownLocationCodes = new Set(locationsCache.map(l=>l.code));
   const newItems = [];
 
@@ -792,6 +799,102 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
 
   statusEl.textContent = `匯入完成！共新增 ${newItems.length} 筆品項。可以到「庫存查詢」或「庫存總表」查看。`;
 });
+
+// 把「儲位分布」欄位的顯示文字（例如「A右×4、屏東×2」）還原成 {A右:4, 屏東:2} 這種資料格式
+function parseLocSummaryText(str){
+  const locs = {};
+  if(!str || str === "-") return locs;
+  str.toString().split("、").forEach(pair=>{
+    const m = /^(.+)×(\d+)$/.exec(pair.trim());
+    if(m) locs[m[1]] = Number(m[2]);
+  });
+  return locs;
+}
+
+// ============================================================
+// 還原完整備份（把「匯出完整備份(Excel)」產生的檔案，完整套用回資料庫）
+// ============================================================
+async function restoreFullBackup(wb, statusEl){
+  const ok = confirm(
+    "偵測到這是「完整備份」檔案。\n\n" +
+    "還原會先清除目前所有品項、儲位、進出貨紀錄，換成這份備份「當時」的內容（含當時的成本、儲位、生產日期）。\n" +
+    "此動作無法復原，請確認這是你要的備份時間點。\n\n確定要繼續還原嗎？"
+  );
+  if(!ok){ statusEl.textContent = "已取消還原。"; return; }
+
+  statusEl.textContent = "清除目前資料中...";
+  const itemsSnap = await db.collection("items").get();
+  const locSnap = await db.collection("locations").get();
+  const txnSnap = await db.collection("transactions").get();
+  const allDocs = [...itemsSnap.docs, ...locSnap.docs, ...txnSnap.docs];
+  let done = 0;
+  while(done < allDocs.length){
+    const batch = db.batch();
+    allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
+    await batch.commit();
+    done += 400;
+  }
+
+  const itemRows = XLSX.utils.sheet_to_json(wb.Sheets["品項主檔"] || {});
+  const locRows = XLSX.utils.sheet_to_json(wb.Sheets["儲位主檔"] || {});
+  const txnRows = wb.Sheets["進出貨紀錄"] ? XLSX.utils.sheet_to_json(wb.Sheets["進出貨紀錄"]) : [];
+
+  // 品項：沿用備份裡的 id 當作 Firestore 文件ID，這樣進出貨紀錄的 itemId 才能正確對應回來
+  let count = 0;
+  while(count < itemRows.length){
+    const batch = db.batch();
+    itemRows.slice(count, count+400).forEach(r=>{
+      const id = (r["id"] || "").toString().trim();
+      if(!id) return;
+      batch.set(db.collection("items").doc(id), {
+        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
+        locations: parseLocSummaryText(r["儲位分布"]),
+        cost: (r["成本"] === undefined || r["成本"] === null || r["成本"] === "") ? null : Number(r["成本"]),
+        productionDate: r["生產日期"] || null,
+        remark: r["備註"] || ""
+      });
+    });
+    await batch.commit();
+    count += 400;
+    statusEl.textContent = `還原品項中...${Math.min(count,itemRows.length)}/${itemRows.length}`;
+  }
+
+  // 儲位
+  count = 0;
+  while(count < locRows.length){
+    const batch = db.batch();
+    locRows.slice(count, count+400).forEach(r=>{
+      const code = (r["儲位代碼"] || "").toString().trim();
+      if(!code) return;
+      batch.set(db.collection("locations").doc(), {code});
+    });
+    await batch.commit();
+    count += 400;
+  }
+
+  // 進出貨紀錄
+  count = 0;
+  while(count < txnRows.length){
+    const batch = db.batch();
+    txnRows.slice(count, count+400).forEach(r=>{
+      batch.set(db.collection("transactions").doc(), {
+        itemId: r["itemId"] || "",
+        type: r["type"] || "in",
+        qty: Number(r["qty"]) || 0,
+        loc: r["loc"] || "",
+        date: r["date"] || todayStr(),
+        operator: r["operator"] || "",
+        editLog: [] // 逐次修改歷程無法透EEEExcel完整保留，還原後重新開始記錄
+      });
+    });
+    await batch.commit();
+    count += 400;
+    statusEl.textContent = `還原進出貨紀錄中...${Math.min(count,txnRows.length)}/${txnRows.length}`;
+  }
+
+  statusEl.textContent = `還原完成！共還原 ${itemRows.length} 筆品項、${locRows.length} 個儲位、${txnRows.length} 筆進出貨紀錄`
+    + `（提醒：每筆紀錄過去的逐次編輯歷程無法透Excel完整保留，但庫存數量、成本、儲位、生產日期都已正確還原）。`;
+}
 
 // ============================================================
 // 共用 Modal
