@@ -3,20 +3,23 @@
 // Phase 1：登入分權 / 庫存查詢 / 進銷貨管理(手動輸入) / 儲位管理 / 庫存總表 / 使用者管理
 // ============================================================
 
-// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檻年限（1-9年）才會反紅，不再自動顯示。
+// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門櫃年限（1-9年）才會反紅，不再自動顯示。
 const DEFAULT_BRANDS = [
-  "賽輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
-  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
+  "賣輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
+  "黑獄輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克NEXEN",
   "路德斯通ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諾ZESTINO"
 ];
 
-// 小圖示（inline SVG，不需要額外的圖示字型或CDN）
+// 小圖示（inline SVG，不需要額外的圖示字體或CDN）
 const ICONS = {
   query: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   master:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/></svg>',
   txn:   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h13l-2-3M21 17H8l2 3"/></svg>',
   loc:   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
   users: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  orders:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><path d="M9 12h6M9 16h6M9 8h2"/></svg>',
+  myorders:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+  cart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>',
 };
 
 let currentUser = null; // {uid, name, username, role}
@@ -25,6 +28,8 @@ let locationsCache = [];
 let usersCache = [];
 let txnCache = [];
 let brandsCache = [];
+let ordersCache = [];   // 管理者用：目前所有「待確認」的訂單
+let myOrdersCache = []; // 員工用：自己下過的全部訂單（含待確認/已出貨/已取消）
 
 // ---------- 工具函式 ----------
 function norm(s){ return (s || "").toString().toUpperCase().replace(/\s+/g, ""); }
@@ -32,7 +37,7 @@ function todayStr(){ return new Date().toISOString().slice(0,10); }
 // 舊版依標準日期(YYYY-MM-DD)算月份，仍保留給「進貨時填的生產日期」使用（如果之後有人改用標準格式填寫）。
 function monthsBetween(dateStr){
   if(!dateStr) return null;
-  const m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(String(dateStr).trim());
+  const m = /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/.exec(String(dateStr).trim());
   if(!m) return null;
   const year = Number(m[1]);
   if(year < 2015 || year > 2035) return null; // 年份不合理，視為無效日期
@@ -61,14 +66,14 @@ function tireCodeMonthsAgo(code){
   const week = Number(m[1]);
   const yy = Number(m[2]);
   if(week < 1 || week > 53) return null;
-  const year = 2000 + yy; // 假設都是西元2000年後生產
-  if(year < 2015 || year > 2035) return null; // 年份不合理，視為無效代碼
+  const year = 2000 + yy; // 假設都是西儃2000年後生產
+  if(year < 2015 || year > 2035) return null; // 年分不合理，視為無效代碼
   const d = isoWeekToDate(year, week);
   if(isNaN(d)) return null;
   const now = new Date();
   return (now.getFullYear() - d.getUTCFullYear()) * 12 + (now.getMonth() - d.getUTCMonth());
 }
-// 儲位資料格式：{ 儲位代碼: [ {qty, productionDate}, ... ] }——每個儲位底下可以有「好幾批」不同生產日期的庫存，
+// 儲位資料格式：{ 儲位代碼: [ {qty, productionDate}, ... ] }——每個儲位底下可以有好幾批不同生產日期的庫存，
 // 因為同一個儲位常常會混到不同批次進貨的貨。
 // 為了相容舊資料（早期是純數字、或單一 {qty, productionDate} 物件），一律透過 normalizeBatches() 讀取，
 // 不要直接讀 item.locations[code]，避免遇到舊格式就壞掉。
@@ -90,7 +95,7 @@ function totalQty(item){
   return Object.values(locs).reduce((a,b)=>a+locQty(b), 0);
 }
 // 回傳這個品項底下每一批（每個儲位×每個生產日期）的明細：[{code, idx, qty, date}]，idx是這一批在該儲位陣列裡的位置
-// 依儲位代碼、生產日期排序；同一個儲位如果有兩批不同生產日期，會各自變成獨立一行，不會混在一起
+// 依儲位代碼、生產日期排序；同一個儲位如果有兩批不同生產日期，會各自變成狜立一行，不會混在一起
 function locDetailList(item){
   const locs = item.locations || {};
   const rows = [];
@@ -152,19 +157,21 @@ auth.onAuthStateChanged(async (user)=>{
 
 // ---------- 分頁(Tabs) ----------
 const TAB_DEFS = [
-  {id:"query",  label:"庫存查詢", icon:ICONS.query,  roles:["admin","member"]},
-  {id:"master", label:"庫存總表", icon:ICONS.master, roles:["admin"]},
-  {id:"txn",    label:"進銷貨管理", icon:ICONS.txn,  roles:["admin"]},
-  {id:"loc",    label:"儲位管理", icon:ICONS.loc,    roles:["admin"]},
-  {id:"import", label:"資料匯入", icon:ICONS.txn,    roles:["admin"]},
-  {id:"users",  label:"使用者管理", icon:ICONS.users,roles:["admin"]},
+  {id:"query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
+  {id:"myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
+  {id:"master",   label:"庫存總表", icon:ICONS.master,  roles:["admin"]},
+  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin"]},
+  {id:"orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
+  {id:"loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
+  {id:"import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
+  {id:"users",    label:"使用者管理", icon:ICONS.users, roles:["admin"]},
 ];
 
 function buildTabs(){
   const nav = document.getElementById("tabs");
   const visible = TAB_DEFS.filter(t=>t.roles.includes(currentUser.role));
   nav.innerHTML = visible.map((t,i)=>
-    `<button data-tab="${t.id}" class="${i===0?'active':''}">${t.icon}${t.label}</button>`
+    `<button data-tab="${t.id}" class="${i===0?'active':''}">${t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}</button>`
   ).join("");
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+visible[0].id).classList.add("active");
@@ -226,12 +233,39 @@ function startListeners(){
       txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderTxns();
     });
+    db.collection("orders").where("status","==","pending").onSnapshot(snap=>{
+      ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderOrders();
+      updateOrdersBadge();
+    });
+  } else {
+    db.collection("orders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
+      myOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderMyOrders();
+    });
   }
   db.collection("brands").onSnapshot(snap=>{
     brandsCache = snap.docs.map(d=>d.data().name);
     if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
   }, ()=>{ brandsCache = DEFAULT_BRANDS.slice(); });
 }
+
+// 有新訂單待確認時，讓管理者不管在哪一頁都能馬上看到（畫面上方横幅 + 分頁按鈕上的紅點數字）
+function updateOrdersBadge(){
+  const badge = document.getElementById("ordersTabBadge");
+  const banner = document.getElementById("ordersBanner");
+  const bannerText = document.getElementById("ordersBannerText");
+  const n = ordersCache.length;
+  if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
+  if(banner && bannerText){
+    if(n > 0){ bannerText.textContent = `有 ${n} 筆新訂單待確認`; banner.classList.remove("hidden"); }
+    else banner.classList.add("hidden");
+  }
+}
+document.getElementById("dismissOrdersBanner").addEventListener("click", ()=>{
+  const btn = document.querySelector('nav.tabs button[data-tab="orders"]');
+  if(btn) btn.click();
+});
 
 // ============================================================
 // 庫存查詢
@@ -250,18 +284,68 @@ function renderQuery(){
 
   box.innerHTML = list.slice(0,200).map(it=>{
     return `<div class="card">
-      <div class="code">${escapeHtml(it.spec)}</div>
+      <div class="code-row">
+        <div class="code">${escapeHtml(it.spec)}</div>
+        <button class="order-btn" data-id="${it.id}">${ICONS.cart}叫貨</button>
+      </div>
       <div class="sub">${escapeHtml(it.brand)}　${escapeHtml(it.model||"")}</div>
       <div class="qty">庫存 ${totalQty(it)}${it.cost!=null?`　　成本 ${it.cost}`:""}</div>
       <div class="sub">儲位：${escapeHtml(locSummary(it))}</div>
     </div>`;
   }).join("") || `<div class="empty">查無符合的可售品項</div>`;
+
+  box.querySelectorAll(".order-btn").forEach(b=>{
+    b.addEventListener("click", ()=> openOrderModal(b.dataset.id));
+  });
+}
+
+// 員工在庫存查詢頁點「叫貨」：填數量、客戶資訊，送出後只建立一筆「待確認」訂單，不會馬上扣庫存
+function openOrderModal(itemId){
+  const item = itemsCache.find(i=>i.id===itemId);
+  if(!item) return;
+  const avail = totalQty(item);
+  const html = `
+    <div class="sheet-head"><h2>叫貨：${escapeHtml(item.spec)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>品牌／型號</label><input type="text" value="${escapeHtml(item.brand)} ${escapeHtml(item.model||'')}" disabled></div>
+    <div class="form-row"><label>目前庫存</label><input type="text" value="${avail}" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="orderQty" min="1" max="${avail}"></div>
+    <div class="form-row"><label>客戶姓名</label><input type="text" id="orderCustomerName"></div>
+    <div class="form-row"><label>聯絡方式</label><input type="text" id="orderCustomerContact"></div>
+    <div class="form-row"><label>備註</label><input type="text" id="orderCustomerNote"></div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="orderSubmitBtn">送出叫貨</button>
+    </div>`;
+  openModal(html);
+
+  document.getElementById("orderSubmitBtn").addEventListener("click", async ()=>{
+    const qty = Number(document.getElementById("orderQty").value);
+    const customerName = document.getElementById("orderCustomerName").value.trim();
+    const customerContact = document.getElementById("orderCustomerContact").value.trim();
+    const customerNote = document.getElementById("orderCustomerNote").value.trim();
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    if(qty > avail){ alert(`目前庫存只有 ${avail}，不能叫超過這個數量`); return; }
+    if(!customerName){ alert("請輸入客戶姓名"); return; }
+    try{
+      await db.collection("orders").add({
+        itemId: item.id,
+        itemLabel: `${item.brand} ${item.spec}（${item.model||""}）`,
+        qty, customerName, customerContact, customerNote,
+        requestedByUid: currentUser.uid, requestedByName: currentUser.name,
+        status: "pending", requestedAt: new Date().toISOString()
+      });
+      closeModal();
+      alert("已送出，等待管理者確認出貨。");
+    }catch(e){
+      alert("送出失敗："+e.message);
+    }
+  });
 }
 
 // ============================================================
 // 庫存總表
 // ============================================================
-let masterExpireYears = null; // null=未套用反紅；1-9=套用中的門檻年限
+let masterExpireYears = null; // null=未套用反紅；1-9=套用中的門櫃年限
 document.getElementById("masterBox").addEventListener("input", renderMaster);
 document.getElementById("applyExpireBtn").addEventListener("click", ()=>{
   masterExpireYears = Number(document.getElementById("expireYearsSelect").value);
@@ -279,12 +363,12 @@ function renderMaster(){
   if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
 
   document.getElementById("masterCount").textContent = `共 ${list.length} 筆`
-    + (masterExpireYears ? `　（反紅門檻：超過 ${masterExpireYears} 年）` : "");
+    + (masterExpireYears ? `　（反紅門櫃：超過 ${masterExpireYears} 年）` : "");
 
   const body = document.getElementById("masterBody");
   body.innerHTML = list.map(it=>{
     // 反紅邏輯：只要某個儲位的生產日期能被解析成合法的4碼DOT代碼（週+年），就直接拿來判斷；
-    // 無法解析（像「926」這種3碼、或格式不對的舊年分代碼）一律當作「無法判定」，不會反紅、不會用猜的。
+    // 無法解析（像「926」這种3碼、或格式不對的舊年分代碼）一律當作「無法判定」，不會反紅、不會用猜的。
     const details = locDetailList(it).map(d=>{
       let expired = false;
       if(masterExpireYears){
@@ -444,10 +528,33 @@ async function exportFullBackup(){
 document.getElementById("newTxnBtn").addEventListener("click", openTxnModal);
 document.getElementById("newItemBtn").addEventListener("click", openNewItemModal);
 
+document.getElementById("txnFilterFrom").addEventListener("change", renderTxns);
+document.getElementById("txnFilterTo").addEventListener("change", renderTxns);
+document.getElementById("txnFilterSalesperson").addEventListener("input", renderTxns);
+document.getElementById("txnFilterCustomer").addEventListener("input", renderTxns);
+document.getElementById("txnFilterClearBtn").addEventListener("click", ()=>{
+  document.getElementById("txnFilterFrom").value = "";
+  document.getElementById("txnFilterTo").value = "";
+  document.getElementById("txnFilterSalesperson").value = "";
+  document.getElementById("txnFilterCustomer").value = "";
+  renderTxns();
+});
+
 function renderTxns(){
   const body = document.getElementById("txnBody");
-  document.getElementById("txnCount").textContent = `共 ${txnCache.length} 筆`;
-  body.innerHTML = txnCache.map(t=>{
+  const from = document.getElementById("txnFilterFrom").value;
+  const to = document.getElementById("txnFilterTo").value;
+  const salesQ = norm(document.getElementById("txnFilterSalesperson").value);
+  const custQ = norm(document.getElementById("txnFilterCustomer").value);
+
+  let list = txnCache.slice();
+  if(from) list = list.filter(t=> t.date >= from);
+  if(to) list = list.filter(t=> t.date <= to);
+  if(salesQ) list = list.filter(t=> norm(t.salesperson || t.operator || "").includes(salesQ));
+  if(custQ) list = list.filter(t=> norm(t.customerName || "").includes(custQ));
+
+  document.getElementById("txnCount").textContent = `共 ${list.length} 筆`;
+  body.innerHTML = list.map(t=>{
     const item = itemsCache.find(i=>i.id===t.itemId);
     const label = item ? `${item.brand} ${item.spec}` : "(品項已刪除)";
     return `<tr>
@@ -455,10 +562,12 @@ function renderTxns(){
       <td>${t.type==='in'?'進貨':'銷貨'}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
+      <td>${escapeHtml(t.salesperson||"")}</td>
+      <td>${escapeHtml(t.customerName||"")}</td>
       <td>${escapeHtml(t.operator||"")}</td>
       <td><button data-edit="${t.id}">編輯</button> <button data-del="${t.id}">刪除</button></td>
     </tr>`;
-  }).join("") || `<tr><td colspan="6" class="empty">尚無紀錄</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">尚無紀錄</td></tr>`;
 
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>editTxn(b.dataset.edit)));
   body.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", ()=>deleteTxn(b.dataset.del)));
@@ -502,7 +611,7 @@ function openTxnModal(){
     }
     if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; window._txnOutOptions = []; return; }
     if(type === "out"){
-      // 銷貨：把「每個儲位×每一批不同生產日期」都列成獨立選項，選哪個就是從哪個儲位、哪一批扣庫存，
+      // 銷貨：把「每個儲位×每一批不同生產日期」都列成狜立選項，選哪個就是從哪個儲位、哪一批扣庫存，
       // 這樣同一個儲位如果混了不同生產日期的批次，才不會扣錯批次、算錯效期。
       const options = locDetailList(it);
       window._txnOutOptions = options;
@@ -579,7 +688,7 @@ async function submitTxn(itemId, type, qty, loc, batchDate){
       batches[0].qty += qty;
       usedDate = batches[0].productionDate || null;
     } else {
-      // 沒填日期，且這個儲位是全新的或已經有多批：併入「未填日期」的那一批，沒有的話就新增一批未填日期的
+      // 沒填日期，且這個儲位是全新的或已經有多批：併入「未填日期」的那一批，沒有的話就新增一批未填日期
       const idx = batches.findIndex(b=> !b.productionDate);
       if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
       usedDate = null;
@@ -615,7 +724,7 @@ async function editTxn(txnId){
   const item = itemSnap.data();
   const allLocs = {...(item.locations||{})};
   let batches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
-  // 舊資料（改版前的紀錄）沒有 batchDate 欄位，這種情況只能盡量抓第一批來調整
+  // 舊資料（改版前的紀錄）沒有 batchDate 欄位，這種情況只能盡量抳第一批來調整
   let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
   if(idx < 0) idx = 0;
   if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
@@ -694,6 +803,183 @@ function openNewItemModal(){
     await db.collection("items").add({brand, model, spec, remark, locations:{}, cost:null});
     closeModal();
   });
+}
+
+// ============================================================
+// 訂單管理（管理者：確認/修改/取消員工在庫存查詢頁送出的叫貨）
+// ============================================================
+function renderOrders(){
+  const body = document.getElementById("ordersBody");
+  if(!body) return;
+  document.getElementById("ordersCount").textContent = `共 ${ordersCache.length} 筆待確認`;
+  const sorted = ordersCache.slice().sort((a,b)=> (a.requestedAt||"").localeCompare(b.requestedAt||""));
+  body.innerHTML = sorted.map(o=>`<tr>
+    <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
+    <td>${escapeHtml(o.requestedByName||"")}</td>
+    <td>${escapeHtml(o.itemLabel||"")}</td>
+    <td>${o.qty}</td>
+    <td>${escapeHtml(o.customerName||"")}</td>
+    <td>${escapeHtml(o.customerContact||"")}</td>
+    <td>${escapeHtml(o.customerNote||"")}</td>
+    <td>
+      <button data-confirm="${o.id}">確認</button>
+      <button data-edit="${o.id}">修改</button>
+      <button data-cancel="${o.id}">取消</button>
+    </td>
+  </tr>`).join("") || `<tr><td colspan="8" class="empty">目前沒有待確認訂單</td></tr>`;
+
+  body.querySelectorAll("[data-confirm]").forEach(b=>b.addEventListener("click", ()=> openConfirmOrderModal(b.dataset.confirm)));
+  body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=> openEditOrderModal(b.dataset.edit)));
+  body.querySelectorAll("[data-cancel]").forEach(b=>b.addEventListener("click", ()=> cancelOrder(b.dataset.cancel)));
+}
+
+// 點「確認」：選好儲位/批次後才真正扣庫存，並把這筆訂單轉成正式紀錄
+function openConfirmOrderModal(orderId){
+  const order = ordersCache.find(o=>o.id===orderId);
+  if(!order) return;
+  const item = itemsCache.find(i=>i.id===order.itemId);
+  if(!item){ alert("找不到這個品項，可能已被刪除。請改用「修改」換一個品項，或直接取消這筆訂單。"); return; }
+  const options = locDetailList(item);
+  if(options.length === 0){ alert("這個品項目前沒有庫存可以出貨，請先確認庫存，或取消這筆訂單。"); return; }
+
+  const html = `
+    <div class="sheet-head"><h2>確認出貨：${escapeHtml(order.itemLabel||"")}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>客戶</label><input type="text" value="${escapeHtml(order.customerName||'')}（${escapeHtml(order.customerContact||'')}）" disabled></div>
+    <div class="form-row"><label>數量</label><input type="text" value="${order.qty}" disabled></div>
+    <div class="form-row"><label>選擇要出貨的儲位／批次</label>
+      <select id="confirmLoc">${options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("")}</select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="confirmOrderSubmitBtn">確認出貨</button>
+    </div>`;
+  openModal(html);
+
+  document.getElementById("confirmOrderSubmitBtn").addEventListener("click", async ()=>{
+    const idx = Number(document.getElementById("confirmLoc").value);
+    const opt = options[idx];
+    if(!opt){ alert("請選擇儲位"); return; }
+    if(order.qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不夠出 ${order.qty} 條，請選別批，或先用「修改」調整這筆訂單的數量`); return; }
+    try{
+      const txnRef = await submitOrderTxn(order, opt.code, opt.date);
+      await db.collection("orders").doc(order.id).update({
+        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
+      });
+      closeModal();
+    }catch(e){
+      alert("確認失敗："+e.message);
+    }
+  });
+}
+
+// 訂單確認出貨專用的扣庫存邏輯：跟一般銷貨一樣扣指定儲位/批次的庫存，
+// 但額外把「業務(下單員工)」「客戶資訊」寫進進出貨紀錄，讓進銷貨管理表格看得到是誰賣給誰的。
+async function submitOrderTxn(order, loc, batchDate){
+  const itemRef = db.collection("items").doc(order.itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+  const targetDate = batchDate || null;
+  const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+  if(idx < 0) throw new Error("找不到指定的批次，請重新整理頁面再試一次");
+  if(batches[idx].qty < order.qty) throw new Error("這一批庫存不足，請重新選擇");
+  batches[idx].qty -= order.qty;
+  if(batches[idx].qty <= 0) batches.splice(idx, 1);
+  allLocs[loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[loc].length === 0) delete allLocs[loc];
+  await itemRef.update({locations: allLocs});
+  return await db.collection("transactions").add({
+    itemId: order.itemId, type: "out", qty: order.qty, loc, batchDate: targetDate,
+    date: todayStr(), operator: currentUser.name,
+    salesperson: order.requestedByName || "", customerName: order.customerName || "",
+    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+    orderId: order.id, editLog: []
+  });
+}
+
+// 點「修改」：連品項都能換（業務在外面忙，都靠管理者統一調整），改完還是「待確認」狀態
+function openEditOrderModal(orderId){
+  const order = ordersCache.find(o=>o.id===orderId);
+  if(!order) return;
+  let selectedItemId = order.itemId;
+  const html = `
+    <div class="sheet-head"><h2>修改訂單</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row">
+      <label>搜尋品項（要換品項才需要，不換不用理它）</label>
+      <input type="text" id="editOrderItemSearch" placeholder="例如 205/60">
+      <div class="autocomplete-list hidden" id="editOrderItemList"></div>
+    </div>
+    <div class="form-row"><label>目前品項</label><input type="text" id="editOrderItemLabel" value="${escapeHtml(order.itemLabel||'')}" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="editOrderQty" min="1" value="${order.qty}"></div>
+    <div class="form-row"><label>客戶姓名</label><input type="text" id="editOrderCustomerName" value="${escapeHtml(order.customerName||'')}"></div>
+    <div class="form-row"><label>聯絡方式</label><input type="text" id="editOrderCustomerContact" value="${escapeHtml(order.customerContact||'')}"></div>
+    <div class="form-row"><label>備註</label><input type="text" id="editOrderCustomerNote" value="${escapeHtml(order.customerNote||'')}"></div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="editOrderSaveBtn">儲存</button>
+    </div>`;
+  openModal(html);
+
+  const searchInput = document.getElementById("editOrderItemSearch");
+  searchInput.addEventListener("input", ()=>{
+    const q = norm(searchInput.value);
+    const listEl = document.getElementById("editOrderItemList");
+    if(!q){ listEl.classList.add("hidden"); return; }
+    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
+    listEl.classList.toggle("hidden", matches.length===0);
+    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
+      selectedItemId = d.dataset.id;
+      const it = itemsCache.find(i=>i.id===selectedItemId);
+      document.getElementById("editOrderItemLabel").value = `${it.brand} ${it.spec}（${it.model||""}）`;
+      listEl.classList.add("hidden");
+      searchInput.value = "";
+    }));
+  });
+
+  document.getElementById("editOrderSaveBtn").addEventListener("click", async ()=>{
+    const qty = Number(document.getElementById("editOrderQty").value);
+    const customerName = document.getElementById("editOrderCustomerName").value.trim();
+    const customerContact = document.getElementById("editOrderCustomerContact").value.trim();
+    const customerNote = document.getElementById("editOrderCustomerNote").value.trim();
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const it = itemsCache.find(i=>i.id===selectedItemId);
+    const itemLabel = it ? `${it.brand} ${it.spec}（${it.model||""}）` : order.itemLabel;
+    try{
+      await db.collection("orders").doc(orderId).update({
+        itemId: selectedItemId, itemLabel, qty, customerName, customerContact, customerNote
+      });
+      closeModal();
+    }catch(e){
+      alert("儲存失敗："+e.message);
+    }
+  });
+}
+
+function cancelOrder(orderId){
+  if(!confirm("確定要取消這筆訂單嗎？")) return;
+  db.collection("orders").doc(orderId).update({
+    status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: currentUser.name
+  }).catch(e=>alert("取消失敗："+e.message));
+}
+
+// ============================================================
+// 我的訂單（員工：查看自己叫貨的狀態，待管理者確認後才算正式出貨紀錄）
+// ============================================================
+function renderMyOrders(){
+  const body = document.getElementById("myOrdersBody");
+  if(!body) return;
+  const sorted = myOrdersCache.slice().sort((a,b)=> (b.requestedAt||"").localeCompare(a.requestedAt||""));
+  document.getElementById("myOrdersCount").textContent = `共 ${sorted.length} 筆`;
+  const statusLabel = { pending:"待確認", confirmed:"已出貨", cancelled:"已取消" };
+  body.innerHTML = sorted.map(o=>`<tr>
+    <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
+    <td>${escapeHtml(o.itemLabel||"")}</td>
+    <td>${o.qty}</td>
+    <td>${escapeHtml(o.customerName||"")}</td>
+    <td>${statusLabel[o.status]||o.status}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="empty">尚無訂單紀錄</td></tr>`;
 }
 
 // ============================================================
@@ -791,7 +1077,7 @@ document.getElementById("changePwBtn").addEventListener("click", async ()=>{
   if(oldPw === null) return;
   const newPw = prompt("請輸入新密碼（至少6碼）：");
   if(newPw === null) return;
-  if(!newPw || newPw.length < 6){ alert("新密碼至少要6碼"); return; }
+  if(!newPw || newPw.length < 6){ alert("新密碼至少要16碼"); return; }
   try{
     const email = currentUser.username + "@" + INTERNAL_EMAIL_DOMAIN;
     const cred = firebase.auth.EmailAuthProvider.credential(email, oldPw);
@@ -887,7 +1173,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const locs = {};
       if(zongQty > 0){ locs[zongCode] = {qty:zongQty, productionDate:yearRaw}; knownLocationCodes.add(zongCode); }
       if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:yearRaw}; knownLocationCodes.add("屏東"); }
-      const costVal = r["成本(已套1.25)"];
+      const costVal = r["成本(已夂1.25)"];
       newItems.push({
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
         locations: locs, remark: r["備註"] || "",
