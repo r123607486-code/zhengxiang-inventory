@@ -206,28 +206,17 @@ function startListeners(){
 // ============================================================
 // 庫存查詢
 // ============================================================
-let queryBrandFilter = null;
 document.getElementById("queryBox").addEventListener("input", renderQuery);
 
 function renderQuery(){
   const box = document.getElementById("queryResults");
   const countEl = document.getElementById("queryCount");
   const q = norm(document.getElementById("queryBox").value);
-  const brands = [...new Set(itemsCache.map(i=>i.brand))].filter(Boolean);
-  const chipBox = document.getElementById("queryBrandChips");
-  chipBox.innerHTML = brands.map(b=>
-    `<div class="chip ${queryBrandFilter===b?'selected':''}" data-b="${escapeHtml(b)}">${escapeHtml(b)}</div>`
-  ).join("");
-  chipBox.querySelectorAll(".chip").forEach(c=>c.addEventListener("click", ()=>{
-    queryBrandFilter = queryBrandFilter === c.dataset.b ? null : c.dataset.b;
-    renderQuery();
-  }));
 
   let list = itemsCache.filter(it=> totalQty(it) > 0);
-  if(queryBrandFilter) list = list.filter(it=>it.brand===queryBrandFilter);
   if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
 
-  countEl.textContent = q || queryBrandFilter ? `找到 ${list.length} 筆` : `共 ${list.length} 筆可售品項`;
+  countEl.textContent = q ? `找到 ${list.length} 筆` : `共 ${list.length} 筆可售品項`;
 
   box.innerHTML = list.slice(0,200).map(it=>{
     return `<div class="card">
@@ -242,7 +231,6 @@ function renderQuery(){
 // ============================================================
 // 庫存總表
 // ============================================================
-let masterBrandFilter = null;
 let masterExpireYears = null; // null=未套用反紅；1-9=套用中的門檸年限
 document.getElementById("masterBox").addEventListener("input", renderMaster);
 document.getElementById("applyExpireBtn").addEventListener("click", ()=>{
@@ -256,18 +244,8 @@ document.getElementById("clearExpireBtn").addEventListener("click", ()=>{
 
 function renderMaster(){
   const q = norm(document.getElementById("masterBox").value);
-  const brands = [...new Set(itemsCache.map(i=>i.brand))].filter(Boolean);
-  const chipBox = document.getElementById("masterBrandChips");
-  chipBox.innerHTML = brands.map(b=>
-    `<div class="chip ${masterBrandFilter===b?'selected':''}" data-b="${escapeHtml(b)}">${escapeHtml(b)}</div>`
-  ).join("");
-  chipBox.querySelectorAll(".chip").forEach(c=>c.addEventListener("click", ()=>{
-    masterBrandFilter = masterBrandFilter === c.dataset.b ? null : c.dataset.b;
-    renderMaster();
-  }));
 
   let list = itemsCache.slice(); // 總表：全部品項，含0庫存
-  if(masterBrandFilter) list = list.filter(it=>it.brand===masterBrandFilter);
   if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
 
   document.getElementById("masterCount").textContent = `共 ${list.length} 筆`
@@ -782,8 +760,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       if(zongQty > 0){ locs["總倉(未指定儲位)"] = zongQty; knownLocationCodes.add("總倉(未指定儲位)"); }
       if(pingQty > 0){ locs["屏東"] = pingQty; knownLocationCodes.add("屏東"); }
       newItems.push({
-        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
-        locations: locs, productionDate: null, dotVerified: false, remark: r["備註"] || "", cost: null
+        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "", locations: locs, productionDate: null, dotVerified: false, remark: r["備註"] || "", cost: null
       });
     });
   }
