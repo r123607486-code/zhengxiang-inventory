@@ -68,30 +68,39 @@ function tireCodeMonthsAgo(code){
   const now = new Date();
   return (now.getFullYear() - d.getUTCFullYear()) * 12 + (now.getMonth() - d.getUTCMonth());
 }
-// 儲位資料格式：{ 儲位代碼: {qty, productionDate} }。
-// 為了相容舊資料（早期是 { 儲位代碼: 數量 } 這種純數字格式），一律透過下面兩個函式讀取，
-// 不要直接讀 item.locations[code].qty，避免遇到舊格式就壞掉。
+// 儲位資料格式：{ 儲位代碼: [ {qty, productionDate}, ... ] }——每個儲位底下可以有「好幾批」不同生產日期的庫存，
+// 因為同一個儲位常常會混到不同批次進貨的貨。
+// 為了相容舊資料（早期是純數字、或單一 {qty, productionDate} 物件），一律透過 normalizeBatches() 讀取，
+// 不要直接讀 item.locations[code]，避免遇到舊格式就壞掉。
+function normalizeBatches(raw, item){
+  if(raw == null) return [];
+  if(Array.isArray(raw)) return raw.map(b=>({ qty: Number(b&&b.qty)||0, productionDate: (b&&b.productionDate) || null }));
+  if(typeof raw === "object") return [{ qty: Number(raw.qty)||0, productionDate: raw.productionDate || (item && item.productionDate) || null }];
+  return [{ qty: Number(raw)||0, productionDate: (item && item.productionDate) || null }];
+}
+// 這個儲位「全部批次加起來」的總庫存（不分批次），舊的呼叫方式繼續可用
 function locQty(loc){
   if(loc == null) return 0;
+  if(Array.isArray(loc)) return loc.reduce((a,b)=>a+(Number(b&&b.qty)||0), 0);
   if(typeof loc === "object") return Number(loc.qty)||0;
   return Number(loc)||0;
-}
-function locDate(loc, item){
-  if(loc && typeof loc === "object") return loc.productionDate || null;
-  // 舊格式（純數字）沒有個別儲位的生產日期，退回去看品項本身舊的 productionDate 欄位
-  return (item && item.productionDate) || null;
 }
 function totalQty(item){
   const locs = item.locations || {};
   return Object.values(locs).reduce((a,b)=>a+locQty(b), 0);
 }
-// 回傳這個品項底下每個有庫存的儲位明細：[{code, qty, date}]，依儲位代碼排序
+// 回傳這個品項底下每一批（每個儲位×每個生產日期）的明細：[{code, idx, qty, date}]，idx是這一批在該儲位陣列裡的位置
+// 依儲位代碼、生產日期排序；同一個儲位如果有兩批不同生產日期，會各自變成獨立一行，不會混在一起
 function locDetailList(item){
   const locs = item.locations || {};
-  return Object.entries(locs)
-    .map(([code, v])=>({ code, qty: locQty(v), date: locDate(v, item) }))
-    .filter(l=> l.qty > 0)
-    .sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant"));
+  const rows = [];
+  Object.keys(locs).forEach(code=>{
+    normalizeBatches(locs[code], item).forEach((b, idx)=>{
+      if(b.qty > 0) rows.push({ code, idx, qty: b.qty, date: b.productionDate });
+    });
+  });
+  rows.sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant") || (a.date||"").localeCompare(b.date||""));
+  return rows;
 }
 function locSummary(item){
   const list = locDetailList(item);
@@ -286,7 +295,7 @@ function renderMaster(){
     });
     const rowExpired = details.some(d=>d.expired);
     const locHtml = details.length
-      ? details.map(d=>`<div class="loc-line${d.expired?' loc-expired':''}" data-id="${it.id}" data-code="${escapeHtml(d.code)}">${escapeHtml(d.code)}：${d.qty}${d.date?`（${escapeHtml(d.date)}）`:''}</div>`).join("")
+      ? details.map(d=>`<div class="loc-line${d.expired?' loc-expired':''}" data-id="${it.id}" data-code="${escapeHtml(d.code)}" data-idx="${d.idx}">${escapeHtml(d.code)}：${d.qty}${d.date?`（${escapeHtml(d.date)}）`:''}</div>`).join("")
       : `<span class="empty-inline">無庫存</span>`;
     return `<tr class="${rowExpired?'expire':''}">
       <td>${escapeHtml(it.brand)}</td>
@@ -300,7 +309,7 @@ function renderMaster(){
   }).join("") || `<tr><td colspan="7" class="empty">尚無資料</td></tr>`;
 
   body.querySelectorAll(".loc-line").forEach(el=>{
-    el.addEventListener("click", ()=> openLocationModal(el.dataset.id, el.dataset.code));
+    el.addEventListener("click", ()=> openLocationModal(el.dataset.id, el.dataset.code, Number(el.dataset.idx)));
   });
   body.querySelectorAll(".cost-cell").forEach(td=>{
     td.addEventListener("click", ()=> editCost(td.dataset.id));
@@ -309,26 +318,29 @@ function renderMaster(){
   window._masterFilteredList = list;
 }
 
-// 點擊某一個儲位明細，開啟「編輯生產日期／搬到其他儲位」視窗
-function openLocationModal(itemId, code){
+// 點擊某一批儲位明細，開啟「編輯生產日期／搬到其他儲位／拆成不同批次」視窗
+function openLocationModal(itemId, code, idx){
   const item = itemsCache.find(i=>i.id===itemId);
   if(!item) return;
-  const locs = item.locations || {};
-  const cur = locs[code];
-  const qty = locQty(cur);
-  const date = locDate(cur, item) || "";
-  const otherCodes = locationsCache.map(l=>l.code).filter(c=>c!==code);
+  const allLocs = item.locations || {};
+  const batches = normalizeBatches(allLocs[code], item);
+  const batch = batches[idx];
+  if(!batch) return;
+  const qty = batch.qty;
+  const date = batch.productionDate || "";
+  const allCodes = locationsCache.map(l=>l.code);
 
   const html = `
     <div class="sheet-head"><h2>儲位管理：${escapeHtml(code)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>目前儲位</label><input type="text" value="${escapeHtml(code)}" disabled></div>
-    <div class="form-row"><label>目前庫存</label><input type="text" value="${qty}" disabled></div>
-    <div class="form-row"><label>生產日期（4碼DOT代碼，例如2523；留空表示未填）</label><input type="text" id="locEditDate" value="${escapeHtml(date)}"></div>
+    <div class="form-row"><label>這一批目前庫存</label><input type="text" value="${qty}" disabled></div>
+    <div class="form-row"><label>這一批生產日期（4碼DOT代碼，例如2523；留空表示未填）</label><input type="text" id="locEditDate" value="${escapeHtml(date)}"></div>
     <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
-    <div class="form-row"><label>搬出數量（要搬到別的儲位才填，不搬就留空）</label><input type="number" id="locMoveQty" min="1" max="${qty}"></div>
-    <div class="form-row"><label>搬到哪個儲位（只能選現有儲位）</label>
-      <select id="locMoveTarget"><option value="">請選擇</option>${otherCodes.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+    <div class="form-row"><label>搬出／拆出數量（不搬就留空）</label><input type="number" id="locMoveQty" min="1" max="${qty}"></div>
+    <div class="form-row"><label>搬到哪個儲位（可選本儲位，代表拆成不同生產日期的另一批；只能選現有儲位）</label>
+      <select id="locMoveTarget"><option value="">請選擇</option>${allCodes.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}${c===code?'（本儲位，拆成新批次）':''}</option>`).join("")}</select>
     </div>
+    <div class="form-row"><label>拆出去那批的生產日期（留空表示跟上面這批一樣）</label><input type="text" id="locMoveBatchDate" placeholder="例如 1626"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="locSaveBtn">儲存</button>
@@ -339,27 +351,40 @@ function openLocationModal(itemId, code){
     const newDate = document.getElementById("locEditDate").value.trim();
     const moveQtyRaw = document.getElementById("locMoveQty").value;
     const moveTarget = document.getElementById("locMoveTarget").value;
+    const moveBatchDateRaw = document.getElementById("locMoveBatchDate").value.trim();
     const moveQty = moveQtyRaw ? Number(moveQtyRaw) : 0;
 
     if(moveQty > 0 && !moveTarget){ alert("請選擇要搬到哪個儲位"); return; }
-    if(moveQty > 0 && moveTarget === code){ alert("搬到的儲位不能跟原本一樣"); return; }
-    if(moveQty > qty){ alert("搬出數量不能超過目前庫存"); return; }
+    if(moveQty > qty){ alert("搬出數量不能超過這一批目前的庫存"); return; }
 
-    const newLocs = {...(item.locations||{})};
+    const newLocs = {...allLocs};
+    let srcBatches = normalizeBatches(allLocs[code], item).map(b=>({...b}));
     const remaining = qty - moveQty;
-    if(remaining <= 0) delete newLocs[code];
-    else newLocs[code] = { qty: remaining, productionDate: newDate || null };
+    if(remaining <= 0) srcBatches.splice(idx, 1);
+    else srcBatches[idx] = { qty: remaining, productionDate: newDate || null };
 
     if(moveQty > 0){
-      const existingTarget = newLocs[moveTarget];
-      const existingQty = locQty(existingTarget);
-      const existingDate = locDate(existingTarget, item);
-      newLocs[moveTarget] = {
-        qty: existingQty + moveQty,
-        // 如果目的地本來就有庫存，維持目的地原本的生產日期（避免混批誤蓋）；沒有的話才套用剛剛輸入的生產日期
-        productionDate: existingDate || newDate || null
-      };
+      const destDate = moveBatchDateRaw || (newDate || null);
+      if(moveTarget === code){
+        // 拆到同一個儲位：如果目的批次生產日期剛好跟現有某一批一樣就合併，否則新增一批
+        const existingIdx = srcBatches.findIndex(b=> (b.productionDate||null) === (destDate||null));
+        if(existingIdx>=0) srcBatches[existingIdx] = { qty: srcBatches[existingIdx].qty + moveQty, productionDate: destDate||null };
+        else srcBatches.push({ qty: moveQty, productionDate: destDate||null });
+        newLocs[code] = srcBatches.filter(b=>b.qty>0);
+      } else {
+        newLocs[code] = srcBatches.filter(b=>b.qty>0);
+        let destBatches = normalizeBatches(allLocs[moveTarget], item).map(b=>({...b}));
+        const existingIdx = destBatches.findIndex(b=> (b.productionDate||null) === (destDate||null));
+        if(existingIdx>=0) destBatches[existingIdx] = { qty: destBatches[existingIdx].qty + moveQty, productionDate: destDate||null };
+        else destBatches.push({ qty: moveQty, productionDate: destDate||null });
+        newLocs[moveTarget] = destBatches.filter(b=>b.qty>0);
+      }
+    } else {
+      newLocs[code] = srcBatches.filter(b=>b.qty>0);
     }
+
+    if(newLocs[code] && newLocs[code].length===0) delete newLocs[code];
+    if(moveTarget && newLocs[moveTarget] && newLocs[moveTarget].length===0) delete newLocs[moveTarget];
 
     db.collection("items").doc(itemId).update({ locations: newLocs })
       .then(()=>closeModal())
@@ -442,20 +467,20 @@ function renderTxns(){
 function openTxnModal(){
   const html = `
     <div class="sheet-head"><h2>新增進貨／銷貨</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>類型</label>
+      <select id="txnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
+    </div>
     <div class="form-row">
       <label>搜尋品項（輸入規格或型號）</label>
       <input type="text" id="txnItemSearch" placeholder="例如 205/60">
       <div class="autocomplete-list hidden" id="txnItemList"></div>
     </div>
     <div class="form-row"><label>已選品項</label><input type="text" id="txnItemLabel" disabled></div>
-    <div class="form-row"><label>類型</label>
-      <select id="txnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
-    </div>
     <div class="form-row"><label>數量</label><input type="number" id="txnQty" min="1"></div>
     <div class="form-row"><label>儲位</label>
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
-    <div class="form-row" id="txnProdDateRow"><label>生產日期（選填，這批的4碼DOT代碼，例如2523）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
+    <div class="form-row" id="txnProdDateRow"><label>生產日期（選填，這批的4碼DOT代碼，例如2523；只有進貨才需要）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -475,16 +500,19 @@ function openTxnModal(){
     } else {
       prodDateRow.classList.remove("hidden");
     }
-    if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; return; }
+    if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; window._txnOutOptions = []; return; }
     if(type === "out"){
-      // 銷貨：只能選這個品項「目前實際有庫存」的儲位
-      const stockedLocs = locDetailList(it);
-      if(stockedLocs.length === 0){
+      // 銷貨：把「每個儲位×每一批不同生產日期」都列成獨立選項，選哪個就是從哪個儲位、哪一批扣庫存，
+      // 這樣同一個儲位如果混了不同生產日期的批次，才不會扣錯批次、算錯效期。
+      const options = locDetailList(it);
+      window._txnOutOptions = options;
+      if(options.length === 0){
         locSelect.innerHTML = `<option value="">這個品項目前沒有庫存可以出貨</option>`;
       } else {
-        locSelect.innerHTML = stockedLocs.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}（目前${l.qty}）</option>`).join("");
+        locSelect.innerHTML = options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("");
       }
     } else {
+      window._txnOutOptions = [];
       // 進貨：可以選任何儲位（含新品項可能要放的新儲位）
       locSelect.innerHTML = locationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
     }
@@ -513,38 +541,65 @@ function openTxnModal(){
     if(!selectedItemId){ alert("請先搜尋並選擇一個品項"); return; }
     const type = document.getElementById("txnType").value;
     const qty = Number(document.getElementById("txnQty").value);
-    const loc = document.getElementById("txnLoc").value;
-    const prodDate = document.getElementById("txnProdDate").value;
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
-    if(!loc){ alert("請選擇儲位"); return; }
+
+    let loc, batchDate;
     if(type === "out"){
-      const it = itemsCache.find(i=>i.id===selectedItemId);
-      const avail = locQty((it.locations||{})[loc]);
-      if(qty > avail){ alert(`這個儲位目前只有 ${avail} 條，不能出貨 ${qty} 條`); return; }
+      const idx = Number(document.getElementById("txnLoc").value);
+      const opt = (window._txnOutOptions||[])[idx];
+      if(!opt){ alert("請選擇要出貨的儲位（如果同一個儲位有多批不同生產日期，請選對批次）"); return; }
+      loc = opt.code; batchDate = opt.date;
+      if(qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不能出貨 ${qty} 條`); return; }
+    } else {
+      loc = document.getElementById("txnLoc").value;
+      if(!loc){ alert("請選擇儲位"); return; }
+      batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
-    submitTxn(selectedItemId, type, qty, loc, prodDate);
+    submitTxn(selectedItemId, type, qty, loc, batchDate);
   });
 }
 
-async function submitTxn(itemId, type, qty, loc, prodDate){
+async function submitTxn(itemId, type, qty, loc, batchDate){
   const itemRef = db.collection("items").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
-  const locs = {...(item.locations||{})};
-  const existing = locs[loc];
-  const curQty = locQty(existing);
-  const curDate = locDate(existing, item);
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+  let usedDate = null;
+
   if(type === "in"){
-    // 進貨：這是設定/更新該儲位生產日期的地方——有填就用新填的，沒填就維持原本的
-    locs[loc] = { qty: curQty + qty, productionDate: prodDate || curDate || null };
+    const enteredDate = (batchDate||"").toString().trim() || null;
+    if(enteredDate){
+      // 有填生產日期：如果剛好跟這個儲位「現有某一批」的日期一樣，就併進那一批；不一樣就當成新的一批
+      const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
+      usedDate = enteredDate;
+    } else if(batches.length === 1){
+      // 沒填日期，且這個儲位目前剛好只有一批：直接併入那一批，維持原本日期（跟以前行為一致）
+      batches[0].qty += qty;
+      usedDate = batches[0].productionDate || null;
+    } else {
+      // 沒填日期，且這個儲位是全新的或已經有多批：併入「未填日期」的那一批，沒有的話就新增一批未填日期的
+      const idx = batches.findIndex(b=> !b.productionDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
+      usedDate = null;
+    }
   } else {
-    const newQty = curQty - qty;
-    if(newQty <= 0) delete locs[loc];
-    else locs[loc] = { qty: newQty, productionDate: curDate };
+    // 銷貨：batchDate 是使用者在下拉選單選定「要從哪一批扣」的生產日期，直接找那一批扣庫存
+    const targetDate = batchDate || null;
+    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+    if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
+    batches[idx].qty -= qty;
+    if(batches[idx].qty <= 0) batches.splice(idx, 1);
+    usedDate = targetDate;
   }
-  await itemRef.update({locations: locs});
+
+  allLocs[loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[loc].length === 0) delete allLocs[loc];
+
+  await itemRef.update({locations: allLocs});
   await db.collection("transactions").add({
-    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: []
+    itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: []
   });
   closeModal();
 }
@@ -558,15 +613,18 @@ async function editTxn(txnId){
   const itemRef = db.collection("items").doc(t.itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
-  const locs = {...(item.locations||{})};
-  const existing = locs[t.loc];
-  const curQty = locQty(existing);
-  const curDate = locDate(existing, item);
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
+  // 舊資料（改版前的紀錄）沒有 batchDate 欄位，這種情況只能盡量抓第一批來調整
+  let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
+  if(idx < 0) idx = 0;
+  if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
   const sign = t.type === "in" ? 1 : -1;
-  const newLocQty = curQty + diff*sign;
-  if(newLocQty <= 0) delete locs[t.loc];
-  else locs[t.loc] = { qty: newLocQty, productionDate: curDate };
-  await itemRef.update({locations: locs});
+  batches[idx].qty = (batches[idx].qty||0) + diff*sign;
+  if(batches[idx].qty <= 0) batches.splice(idx, 1);
+  allLocs[t.loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
+  await itemRef.update({locations: allLocs});
   await db.collection("transactions").doc(txnId).update({
     qty: newQty,
     editLog: firebase.firestore.FieldValue.arrayUnion({
@@ -582,15 +640,17 @@ async function deleteTxn(txnId){
   const itemRef = db.collection("items").doc(t.itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
-  const locs = {...(item.locations||{})};
-  const existing = locs[t.loc];
-  const curQty = locQty(existing);
-  const curDate = locDate(existing, item);
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
+  let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
+  if(idx < 0) idx = 0;
+  if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
   const sign = t.type === "in" ? -1 : 1; // 刪除等於反向沖銷
-  const newLocQty = curQty + t.qty*sign;
-  if(newLocQty <= 0) delete locs[t.loc];
-  else locs[t.loc] = { qty: newLocQty, productionDate: curDate };
-  await itemRef.update({locations: locs});
+  batches[idx].qty = (batches[idx].qty||0) + t.qty*sign;
+  if(batches[idx].qty <= 0) batches.splice(idx, 1);
+  allLocs[t.loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
+  await itemRef.update({locations: allLocs});
   await db.collection("editLogs").add({
     txnId, action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
   });
@@ -880,14 +940,18 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
   statusEl.textContent = `匯入完成！共新增 ${newItems.length} 筆品項。可以到「庫存查詢」或「庫存總表」查看。`;
 });
 
-// 把「儲位分布」欄位的顯示文字（例如「A右×4(2523)、屏東×2」）還原成
-// {A右:{qty:4,productionDate:"2523"}, 屏東:{qty:2,productionDate:null}} 這種資料格式
+// 把「儲位分布」欄位的顯示文字（例如「A左×8(4125)、A左×4(1626)、屏東×2」）還原成
+// {A左:[{qty:8,productionDate:"4125"},{qty:4,productionDate:"1626"}], 屏東:[{qty:2,productionDate:null}]} 這種資料格式
+// 注意：同一個儲位代碼可能出現兩次（代表兩批不同生產日期），所以要用陣列累加，不能直接覆蓋。
 function parseLocSummaryText(str){
   const locs = {};
   if(!str || str === "-") return locs;
   str.toString().split("、").forEach(pair=>{
     const m = /^(.+)×(\d+)(?:\((.+)\))?$/.exec(pair.trim());
-    if(m) locs[m[1]] = { qty: Number(m[2]), productionDate: m[3] || null };
+    if(!m) return;
+    const code = m[1];
+    if(!locs[code]) locs[code] = [];
+    locs[code].push({ qty: Number(m[2]), productionDate: m[3] || null });
   });
   return locs;
 }
