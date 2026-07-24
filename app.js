@@ -299,7 +299,7 @@ function renderQuery(){
   });
 }
 
-// 員工在庫存查詢頁點「叫貨」：填數量、客戶資訊，送出後只建立一筆「待確認」訂單，不會馬上扣庫存
+// 員工在庫存查詢頁點「叫貨」：選數量、填客戶資訊，送出後只建立一筆「待確認」訂單，不會馬上扣庫存
 function openOrderModal(itemId){
   const item = itemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -308,7 +308,9 @@ function openOrderModal(itemId){
     <div class="sheet-head"><h2>叫貨：${escapeHtml(item.spec)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>品牌／型號</label><input type="text" value="${escapeHtml(item.brand)} ${escapeHtml(item.model||'')}" disabled></div>
     <div class="form-row"><label>目前庫存</label><input type="text" value="${avail}" disabled></div>
-    <div class="form-row"><label>數量</label><input type="number" id="orderQty" min="1" max="${avail}"></div>
+    <div class="form-row"><label>數量</label>
+      <select id="orderQty">${avail>0 ? Array.from({length:avail},(_,i)=>i+1).map(n=>`<option value="${n}">${n}</option>`).join("") : `<option value="0">目前無庫存</option>`}</select>
+    </div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="orderCustomerName"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="orderCustomerContact"></div>
     <div class="form-row"><label>備註</label><input type="text" id="orderCustomerNote"></div>
@@ -1329,13 +1331,25 @@ async function restoreFullBackup(wb, statusEl){
 // ============================================================
 // 共用 Modal
 // ============================================================
+// 手機上（尤其iOS Safari）打開鍵盤時，如果背景頁面還能滚動，畫面常常會整個跑掉、歪掉。
+// 開啟視窗時把背景頁面「鎖住」（position:fixed），關閉時再還原到原本捲動位置，畫面就不會亂跳。
 function openModal(html){
   document.getElementById("modalSheet").innerHTML = html;
   document.getElementById("modalOverlay").classList.remove("hidden");
+  const scrollY = window.scrollY;
+  document.body.dataset.scrollY = scrollY;
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${scrollY}px`;
+  document.body.style.width = "100%";
 }
 function closeModal(){
   document.getElementById("modalOverlay").classList.add("hidden");
   document.getElementById("modalSheet").innerHTML = "";
+  const scrollY = Number(document.body.dataset.scrollY || 0);
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.width = "";
+  window.scrollTo(0, scrollY);
 }
 document.getElementById("modalOverlay").addEventListener("click", (e)=>{
   if(e.target.id === "modalOverlay") closeModal();
