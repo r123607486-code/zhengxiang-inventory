@@ -3,7 +3,8 @@
   --text:#20232b; --muted:#6b7280; --border:#e2e5ec; --green:#1d9e75; --amber:#c07a12;
 }
 *{box-sizing:border-box;}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--text);}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--text);overscroll-behavior-y:none;}
 .hidden{display:none !important;}
 svg.icon{width:20px;height:20px;flex-shrink:0;}
 
@@ -16,6 +17,18 @@ svg.icon{width:20px;height:20px;flex-shrink:0;}
 .login-box button{width:100%;padding:12px;font-size:15px;background:var(--red);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;}
 .login-box button:active{background:var(--red-dark);}
 .login-err{color:#b3261e;font-size:13px;margin-top:6px;min-height:18px;}
+
+/* ---------- 登入後的品項分類選擇畫面 ---------- */
+#categoryScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(180deg,#fff 0%,#f3f4f7 100%);}
+.category-wrap{width:100%;max-width:520px;text-align:center;}
+.category-wrap h1{font-size:16px;color:var(--red-dark);margin:0 0 20px;font-weight:700;}
+.category-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media (max-width:480px){.category-grid{grid-template-columns:1fr;}}
+.category-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px 14px;display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer;box-shadow:0 4px 16px rgba(20,20,20,.06);}
+.category-card:active{background:var(--bg);}
+.category-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center;color:var(--red);}
+.category-icon svg{width:48px;height:48px;}
+.category-label{font-size:14px;font-weight:700;color:var(--text);}
 
 /* ---------- 主畫面 ---------- */
 :root{ --header-h:64px; --nav-h:48px; }
@@ -39,12 +52,12 @@ main{padding:14px;max-width:960px;margin:0 auto;}
 .page{display:none;}
 .page.active{display:block;}
 
-/* 每一頁最上面的搜尋/篩選/統計區塊：固定在頂部，只有下面的清單/表格會捲動（跟S-TEAM那個查詢頁一樣的效果） */
 .page-head{position:sticky;top:calc(var(--header-h) + var(--nav-h));z-index:20;background:var(--bg);padding-top:2px;margin:0 -14px;padding-left:14px;padding-right:14px;}
 .page-head .toolbar:first-child{margin-top:0;}
 
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;}
-.toolbar input[type=text]{flex:1;min-width:160px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:15px;background:#fff;}
+.toolbar input[type=text]{flex:1;min-width:160px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:16px;background:#fff;}
+.toolbar input[type=date]{padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:16px;background:#fff;}
 .toolbar button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;}
 .toolbar button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
@@ -53,8 +66,14 @@ main{padding:14px;max-width:960px;margin:0 auto;}
 
 .count{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
 
-/* 卡片(手機用/庫存查詢) */
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;}
+.card.card-nostock{opacity:.55;}
+.card.card-nostock .qty{color:var(--muted);}
+.card.card-pending{background:#fff4de;border-color:#f0c674;}
+.pending-tag{display:inline-block;background:#c07a12;color:#fff;font-size:10.5px;padding:1px 7px;border-radius:6px;margin-left:6px;vertical-align:middle;}
+table.grid tr.row-pending{background:#fff4de;}
+table.grid tr.row-pending td{color:#8a5a10;}
+table.grid .loc-line.loc-pending{font-weight:700;color:#c07a12;}
 .card .code-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
 .card .code{font-weight:700;font-size:14.5px;}
 .card .sub{font-size:12.5px;color:var(--muted);margin:4px 0;}
@@ -63,15 +82,15 @@ main{padding:14px;max-width:960px;margin:0 auto;}
 .order-btn{display:inline-flex;align-items:center;gap:4px;background:var(--red);color:#fff;border:none;border-radius:20px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
 .order-btn svg{width:14px;height:14px;stroke:#fff;}
 .badge-dot{background:#e11d2e;color:#fff;border-radius:50%;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-left:4px;padding:0 4px;line-height:1;}
+.load-more-btn{display:block;width:100%;margin-top:10px;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13.5px;cursor:pointer;color:var(--red-dark);}
 
-/* 表格(庫存總表用) */
 .table-wrap{overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;}
 table.grid{width:100%;border-collapse:collapse;font-size:13px;min-width:720px;}
 table.grid th{background:#f7f2ef;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap;}
 table.grid td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
 table.grid tr.expire{background:#fdecec;}
 table.grid tr.expire td{color:#a31e22;}
-table.grid td.cost-cell{cursor:pointer;text-decoration:underline dotted;}
+table.grid td.editable-cell{cursor:pointer;text-decoration:underline dotted;}
 table.grid td.loc-detail-cell{white-space:normal;}
 table.grid .loc-line{cursor:pointer;text-decoration:underline dotted;padding:2px 0;}
 table.grid .loc-line:hover{color:var(--red-dark);}
@@ -80,9 +99,8 @@ table.grid .loc-line.loc-expired{color:#a31e22;font-weight:700;}
 
 .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:13.5px;}
 
-/* modal */
-.overlay{position:fixed;inset:0;background:rgba(20,20,20,.45);z-index:30;display:flex;align-items:flex-end;justify-content:center;}
-.sheet{background:#fff;width:100%;max-width:640px;max-height:86vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:18px;}
+.overlay{position:fixed;inset:0;background:rgba(20,20,20,.45);z-index:30;display:flex;align-items:flex-end;justify-content:center;overscroll-behavior:contain;}
+.sheet{background:#fff;width:100%;max-width:640px;max-height:86vh;max-height:86svh;overflow-y:auto;overscroll-behavior:contain;border-radius:16px 16px 0 0;padding:18px;}
 @media (min-width:640px){.sheet{border-radius:16px;margin-bottom:40px;}}
 .sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
 .sheet-head h2{font-size:15px;margin:0;}
@@ -90,7 +108,7 @@ table.grid .loc-line.loc-expired{color:#a31e22;font-weight:700;}
 
 .form-row{margin-bottom:10px;}
 .form-row label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px;}
-.form-row input, .form-row select{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;}
+.form-row input, .form-row select{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:16px;}
 .form-actions{display:flex;gap:8px;margin-top:14px;}
 .form-actions button{flex:1;padding:11px;border-radius:8px;border:1px solid var(--border);background:#fff;font-size:14px;cursor:pointer;}
 .form-actions button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
