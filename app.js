@@ -5,12 +5,11 @@
 
 // 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檻年限（1-9年）才會反紅，不再自動顯示。
 const DEFAULT_BRANDS = [
-  "賣輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
-  "黑獄輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克棎NEXEN",
-  "路德斯ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諺ZESTINO"
+  "賽輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
+  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
+  "路德斯通ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諾ZESTINO"
 ];
 
-// 小圖示（inline SVG，不需要額外的圖示字體或CDN）
 const ICONS = {
   query: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   master:'<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/></svg>',
@@ -411,7 +410,7 @@ function renderQuery(){
         ${noStock ? '' : `<button class="order-btn" data-id="${it.id}">${ICONS.cart}叫貨</button>`}
       </div>
       <div class="sub">${escapeHtml(it.brand)}　${escapeHtml(it.model||"")}</div>
-      <div class="qty">庫存 ${qty}${it.twenty!=null?`　　${"20"}% ${it.twenty}`:""}${it.sellPrice!=null?`　　售價 ${it.sellPrice}`:""}</div>
+      <div class="qty">庫存 ${qty}${it.twenty!=null?`　　20% ${it.twenty}`:""}${it.sellPrice!=null?`　　售價 ${it.sellPrice}`:""}</div>
       <div class="sub">儲位：${escapeHtml(locSummary(it))}</div>
     </div>`;
   }).join("") || `<div class="empty">查無符合的品項</div>`;
