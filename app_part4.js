@@ -16,7 +16,7 @@ document.getElementById("changePwBtn").addEventListener("click", async ()=>{
   if(oldPw === null) return;
   const newPw = prompt("請輸入新密碼（至少6碼）：");
   if(newPw === null) return;
-  if(!newPw || newPw.length < 6){ alert("新密碼至少覆30など0目，修正版：至少6碼"); return; }
+  if(!newPw || newPw.length < 6){ alert("新密碼至少要6碼"); return; }
   try{
     const email = currentUser.username + "@" + INTERNAL_EMAIL_DOMAIN;
     const cred = firebase.auth.EmailAuthProvider.credential(email, oldPw);
@@ -108,7 +108,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const locs = {};
       if(zongQty > 0){ locs[zongCode] = {qty:zongQty, productionDate:yearRaw}; knownLocationCodes.add(zongCode); }
       if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:yearRaw}; knownLocationCodes.add("屏東"); }
-      const costVal = r["成本(已夂1.25)"];
+      const costVal = r["成本(已套1.25)"];
       newItems.push({
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
         locations: locs, remark: r["備註"] || "",
@@ -118,7 +118,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
     });
   }
 
-  const sheet2 = wb.Sheets["其他品牌(此檔未洵蓋位區成本)"];
+  const sheet2 = wb.Sheets["其他品牌(此檔未涵蓋位區成本)"];
   if(sheet2){
     const rows = XLSX.utils.sheet_to_json(sheet2);
     rows.forEach(r=>{
@@ -233,19 +233,19 @@ async function tryImportSailunSheet(wb, statusEl){
   });
 
   const rowsToApply = Array.from(merged.values());
-  statusEl.textContent = `偵測到賣輪總表，共 ${rowsToApply.length} 筆規格（已跳過備註含「下市」的 ${skippedCount} 筆），匯入中...`;
+  statusEl.textContent = `偵測到賽輪總表，共 ${rowsToApply.length} 筆規格（已跳過備註含「下市」的 ${skippedCount} 筆），匯入中...`;
 
   let created = 0, updated = 0;
   let batch = db.batch();
   let opCount = 0;
   for(const r of rowsToApply){
-    const existing = itemsCache.find(it=> norm(it.brand)===norm("賣輪Sailun") && norm(it.spec)===norm(r.spec) && norm(it.model)===norm(r.model));
+    const existing = itemsCache.find(it=> norm(it.brand)===norm("賽輪Sailun") && norm(it.spec)===norm(r.spec) && norm(it.model)===norm(r.model));
     if(existing){
       batch.update(db.collection("items").doc(existing.id), { twenty: r.twenty, sellPrice: r.sellPrice });
       updated++;
     } else {
       const ref = db.collection("items").doc();
-      batch.set(ref, { brand:"賣輪Sailun", model:r.model, spec:r.spec, remark:"", locations:{}, twenty:r.twenty, sellPrice:r.sellPrice });
+      batch.set(ref, { brand:"賽輪Sailun", model:r.model, spec:r.spec, remark:"", locations:{}, twenty:r.twenty, sellPrice:r.sellPrice });
       created++;
     }
     opCount++;
@@ -253,7 +253,7 @@ async function tryImportSailunSheet(wb, statusEl){
   }
   if(opCount > 0) await batch.commit();
 
-  statusEl.textContent = `賣輪總表匯入完成！新增 ${created} 筆、更新20%／售價 ${updated} 筆（跳過備註含「下市」的 ${skippedCount} 筆）。`;
+  statusEl.textContent = `賽輪總表匯入完成！新增 ${created} 筆、更新20%／售價 ${updated} 筆（跳過備註含「下市」的 ${skippedCount} 筆）。`;
   return true;
 }
 
