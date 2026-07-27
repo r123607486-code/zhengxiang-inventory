@@ -23,6 +23,19 @@ document.getElementById("kybImportBtn").addEventListener("click", async ()=>{
 
 document.getElementById("kybQueryBox").addEventListener("input", ()=>{ kybQueryVisibleCount = 200; renderKybQuery(); });
 
+const KYB_BUCKET_ORDER = { "白桶": 0, "藍桶": 1, "深藍桶": 2 };
+function kybBucketRank(it){
+  const r = KYB_BUCKET_ORDER[it.bucketType];
+  return r === undefined ? 99 : r;
+}
+function kybCompareItems(a, b){
+  const bucketDiff = kybBucketRank(a) - kybBucketRank(b);
+  if(bucketDiff !== 0) return bucketDiff;
+  const makeDiff = norm(a.carMake||"").localeCompare(norm(b.carMake||""));
+  if(makeDiff !== 0) return makeDiff;
+  return norm(a.carModel||"").localeCompare(norm(b.carModel||""));
+}
+
 function renderKybQuery(){
   const box = document.getElementById("kybQueryResults");
   const countEl = document.getElementById("kybQueryCount");
@@ -31,7 +44,7 @@ function renderKybQuery(){
   let list = kybItemsCache.slice();
   if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake).includes(q));
   const kybQuerySortRank = (it)=> kybHasPendingStock(it) ? 0 : (kybTotalQty(it)>0 ? 1 : 2);
-  list.sort((a,b)=> kybQuerySortRank(a) - kybQuerySortRank(b));
+  list.sort((a,b)=> (kybQuerySortRank(a) - kybQuerySortRank(b)) || kybCompareItems(a,b));
 
   const inStockCount = list.filter(it=>kybTotalQty(it)>0).length;
   countEl.textContent = q ? `找到 ${list.length} 筆（有庫存 ${inStockCount} 筆）` : `共 ${list.length} 筆車型（有庫存 ${inStockCount} 筆）`;
@@ -131,7 +144,7 @@ function renderKybMaster(){
   let list = kybItemsCache.slice();
   if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake).includes(q));
   const kybMasterSortRank = (it)=> kybHasPendingStock(it) ? 0 : (kybTotalQty(it)>0 ? 1 : 2);
-  list.sort((a,b)=> kybMasterSortRank(a) - kybMasterSortRank(b));
+  list.sort((a,b)=> (kybMasterSortRank(a) - kybMasterSortRank(b)) || kybCompareItems(a,b));
 
   document.getElementById("kybMasterCount").textContent = `共 ${list.length} 筆`;
 
