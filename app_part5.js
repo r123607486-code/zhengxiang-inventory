@@ -18,7 +18,7 @@ document.getElementById("kybImportBtn").addEventListener("click", async ()=>{
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, {type:"array"});
   if(await tryImportKybSheet(wb, statusEl)) return;
-  statusEl.textContent = "找不到可匯入的KYB報價單格式，請確認上傳的檔案含「車型」「訂價」「牌價」欄位。";
+  statusEl.textContent = "找不到可匯入的KYB報價單格式，請確認上傳的檔案含「車型」「一線消費者售價」欄位（或舊版的「車型」「訂價」「牌價」欄位）。";
 });
 
 document.getElementById("kybQueryBox").addEventListener("input", ()=>{ kybQueryVisibleCount = 200; renderKybQuery(); });
@@ -29,7 +29,7 @@ function renderKybQuery(){
   const q = norm(document.getElementById("kybQueryBox").value);
 
   let list = kybItemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.carModel).includes(q));
+  if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake).includes(q));
   const kybQuerySortRank = (it)=> kybHasPendingStock(it) ? 0 : (kybTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> kybQuerySortRank(a) - kybQuerySortRank(b));
 
@@ -40,13 +40,16 @@ function renderKybQuery(){
     const qty = kybTotalQty(it);
     const noStock = qty <= 0;
     const pending = kybHasPendingStock(it);
+    const subParts = ["KYB"];
+    if(it.bucketType) subParts.push(it.bucketType);
+    if(it.carMake) subParts.push(it.carMake);
     return `<div class="card${noStock?' card-nostock':''}${pending?' card-pending':''}">
       <div class="code-row">
         <div class="code">${escapeHtml(it.carModel)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</div>
         ${noStock ? '' : `<button class="order-btn" data-id="${it.id}">${ICONS.cart}叫貨</button>`}
       </div>
-      <div class="sub">KYB</div>
-      <div class="qty">庫存 ${qty}${it.listPrice!=null?`　　訂價 ${it.listPrice}`:""}${it.catalogPrice!=null?`　　牌價 ${it.catalogPrice}`:""}${it.warrantyPrice!=null?`　　保修廠 ${it.warrantyPrice}`:""}</div>
+      <div class="sub">${escapeHtml(subParts.join('　'))}</div>
+      <div class="qty">庫存 ${qty}${it.warrantyPrice!=null?`　　保修廠價 ${it.warrantyPrice}`:""}${it.catalogPrice!=null?`　　一線消費者售價 ${it.catalogPrice}`:""}</div>
       <div class="sub">儲位：${escapeHtml(kybLocSummary(it))}</div>
     </div>`;
   }).join("") || `<div class="empty">查無符合的車型</div>`;
@@ -126,7 +129,7 @@ document.getElementById("kybMasterBox").addEventListener("input", renderKybMaste
 function renderKybMaster(){
   const q = norm(document.getElementById("kybMasterBox").value);
   let list = kybItemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.carModel).includes(q));
+  if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake).includes(q));
   const kybMasterSortRank = (it)=> kybHasPendingStock(it) ? 0 : (kybTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> kybMasterSortRank(a) - kybMasterSortRank(b));
 
@@ -141,27 +144,28 @@ function renderKybMaster(){
       : `<span class="empty-inline">無庫存</span>`;
     return `<tr class="${pending?'row-pending':''}">
       <td>${escapeHtml(it.carModel)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</td>
-      <td>KYB</td>
+      <td>${escapeHtml(it.carMake||"")}</td>
+      <td>${escapeHtml(it.bucketType||"")}</td>
       <td>${kybTotalQty(it)}</td>
       <td class="loc-detail-cell">${locHtml}</td>
-      <td class="editable-cell kyb-list-cell" data-id="${it.id}">${it.listPrice!=null?it.listPrice:"未填"}</td>
-      <td class="editable-cell kyb-catalog-cell" data-id="${it.id}">${it.catalogPrice!=null?it.catalogPrice:"未填"}</td>
+      <td>${escapeHtml(it.yearCode||"")}</td>
+      <td>${escapeHtml(it.partNo||"")}</td>
       <td class="editable-cell kyb-warranty-cell" data-id="${it.id}">${it.warrantyPrice!=null?it.warrantyPrice:"未填"}</td>
+      <td class="editable-cell kyb-catalog-cell" data-id="${it.id}">${it.catalogPrice!=null?it.catalogPrice:"未填"}</td>
       <td>${escapeHtml(it.remark||"")}</td>
       <td>${currentUser.role==='admin' ? `<button data-del="${it.id}" data-model="${escapeHtml(it.carModel)}">刪除</button>` : ""}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="empty">尚無資料</td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="empty">尚無資料</td></tr>`;
 
   body.querySelectorAll(".loc-line").forEach(el=>{
     el.addEventListener("click", ()=> openKybLocationModal(el.dataset.id, el.dataset.code));
   });
   if(currentUser.role === "admin"){
-    body.querySelectorAll(".kyb-list-cell").forEach(td=> td.addEventListener("click", ()=> editKybPrice(td.dataset.id, "listPrice", "訂價")));
-    body.querySelectorAll(".kyb-catalog-cell").forEach(td=> td.addEventListener("click", ()=> editKybPrice(td.dataset.id, "catalogPrice", "牌價")));
-    body.querySelectorAll(".kyb-warranty-cell").forEach(td=> td.addEventListener("click", ()=> editKybPrice(td.dataset.id, "warrantyPrice", "保修廠")));
+    body.querySelectorAll(".kyb-catalog-cell").forEach(td=> td.addEventListener("click", ()=> editKybPrice(td.dataset.id, "catalogPrice", "一線消費者售價")));
+    body.querySelectorAll(".kyb-warranty-cell").forEach(td=> td.addEventListener("click", ()=> editKybPrice(td.dataset.id, "warrantyPrice", "保修廠價")));
     body.querySelectorAll("[data-del]").forEach(b=> b.addEventListener("click", ()=> deleteKybItem(b.dataset.del, b.dataset.model)));
   } else {
-    body.querySelectorAll(".kyb-list-cell,.kyb-catalog-cell,.kyb-warranty-cell").forEach(td=> td.classList.remove("editable-cell"));
+    body.querySelectorAll(".kyb-catalog-cell,.kyb-warranty-cell").forEach(td=> td.classList.remove("editable-cell"));
   }
   window._kybMasterFilteredList = list;
 }
@@ -241,9 +245,9 @@ function editKybPrice(itemId, field, label){
 document.getElementById("kybExportBtn").addEventListener("click", ()=>{
   const list = window._kybMasterFilteredList || [];
   const rows = list.map(it=>({
-    車型: it.carModel, 品牌: "KYB", 總量: kybTotalQty(it), 儲位分布: kybLocSummary(it),
-    訂價: it.listPrice!=null?it.listPrice:"", 牌價: it.catalogPrice!=null?it.catalogPrice:"",
-    保修廠: it.warrantyPrice!=null?it.warrantyPrice:"", 備註: it.remark||""
+    車型: it.carModel, 廠牌: it.carMake||"", 避震款式: it.bucketType||"", 總量: kybTotalQty(it), 儲位分布: kybLocSummary(it),
+    年份代碼: it.yearCode||"", 料號: it.partNo||"",
+    保修廠價: it.warrantyPrice!=null?it.warrantyPrice:"", 一線消費者售價: it.catalogPrice!=null?it.catalogPrice:"", 備註: it.remark||""
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();

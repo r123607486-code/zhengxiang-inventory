@@ -31,9 +31,10 @@ async function exportFullBackup(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kybItemsSnap.docs.map(d=>{
     const it = {id:d.id, ...d.data()};
     return {
-      id: it.id, 車型: it.carModel, 品牌: "KYB", 總量: kybTotalQty(it),
-      儲位分布: kybLocSummary(it), 訂價: it.listPrice!=null?it.listPrice:"", 牌價: it.catalogPrice!=null?it.catalogPrice:"",
-      保修廠: it.warrantyPrice!=null?it.warrantyPrice:"", 備註: it.remark||""
+      id: it.id, 車型: it.carModel, 廠牌: it.carMake||"", 避震款式: it.bucketType||"", 總量: kybTotalQty(it),
+      儲位分布: kybLocSummary(it), 年份代碼: it.yearCode||"", 料號: it.partNo||"",
+      保修廠價: it.warrantyPrice!=null?it.warrantyPrice:"", 一線消費者售價: it.catalogPrice!=null?it.catalogPrice:"",
+      備註: it.remark||""
     };
   })), "KYB品項主檔");
   const kybLocSnap = await db.collection("kybLocations").get();

@@ -48,12 +48,18 @@ async function deleteKybTxn(txnId){
 }
 
 function openNewKybItemModal(){
+  const bucketOptions = ["白桶","藍桶","深藍桶"];
   const html = `
     <div class="sheet-head"><h2>新增車型</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" id="newKybModel" placeholder="例如 Altis '19~"></div>
-    <div class="form-row"><label>訂價</label><input type="number" id="newKybListPrice"></div>
-    <div class="form-row"><label>牌價</label><input type="number" id="newKybCatalogPrice"></div>
-    <div class="form-row"><label>保修廠</label><input type="number" id="newKybWarrantyPrice"></div>
+    <div class="form-row"><label>廠牌</label><input type="text" id="newKybMake" placeholder="例如 TOYOTA"></div>
+    <div class="form-row"><label>避震款式</label>
+      <select id="newKybBucket">${bucketOptions.map(b=>`<option value="${b}">${b}</option>`).join("")}</select>
+    </div>
+    <div class="form-row"><label>年份代碼（選填）</label><input type="text" id="newKybYearCode" placeholder="例如 193-"></div>
+    <div class="form-row"><label>料號（選填）</label><input type="text" id="newKybPartNo" placeholder="例如 NSTC5666L/NSTC5666R/NSFC2222"></div>
+    <div class="form-row"><label>一線消費者售價</label><input type="number" id="newKybCatalogPrice"></div>
+    <div class="form-row"><label>保修廠價</label><input type="number" id="newKybWarrantyPrice"></div>
     <div class="form-row"><label>備註</label><input type="text" id="newKybRemark"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
@@ -65,8 +71,13 @@ function openNewKybItemModal(){
     if(!carModel){ alert("請輸入車型"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
     await db.collection("kybItems").add({
-      carModel, brand:"KYB", remark: document.getElementById("newKybRemark").value.trim(),
-      locations:{}, listPrice: toNum("newKybListPrice"), catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
+      carModel, brand:"KYB",
+      carMake: document.getElementById("newKybMake").value.trim(),
+      bucketType: document.getElementById("newKybBucket").value,
+      yearCode: document.getElementById("newKybYearCode").value.trim(),
+      partNo: document.getElementById("newKybPartNo").value.trim(),
+      remark: document.getElementById("newKybRemark").value.trim(),
+      locations:{}, catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
     });
     closeModal();
   });
