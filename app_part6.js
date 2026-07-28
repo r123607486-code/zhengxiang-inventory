@@ -189,7 +189,7 @@ function openEditKybOrderModal(orderId){
   const html = `
     <div class="sheet-head"><h2>修改訂單</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row">
-      <label>搜尋車型（要換車型才需要，不換不用理它）</label>
+      <label>搜尋車型（要換車型才需要，不換不用理它；找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
       <input type="text" id="editKybOrderItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="editKybOrderItemList"></div>
     </div>
@@ -223,12 +223,12 @@ function openEditKybOrderModal(orderId){
     const listEl = document.getElementById("editKybOrderItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
     const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
-    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.carModel)}</div>`).join("");
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
       selectedItemId = d.dataset.id;
       const it = kybItemsCache.find(i=>i.id===selectedItemId);
-      document.getElementById("editKybOrderItemLabel").value = it.carModel;
+      document.getElementById("editKybOrderItemLabel").value = kybItemLabel(it);
       listEl.classList.add("hidden");
       searchInput.value = "";
       refreshEditLocOptions();

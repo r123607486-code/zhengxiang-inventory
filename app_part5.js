@@ -35,6 +35,11 @@ function kybCompareItems(a, b){
   if(makeDiff !== 0) return makeDiff;
   return norm(a.carModel||"").localeCompare(norm(b.carModel||""));
 }
+// 搜尋清單／已選項目要顯示的完整標籤：車型＋避震款式＋廠牌，避免同車型不同桶色時混淆
+function kybItemLabel(it){
+  const tag = [it.bucketType, it.carMake].filter(Boolean).join(' ');
+  return tag ? `${it.carModel}　${tag}` : it.carModel;
+}
 
 function renderKybQuery(){
   const box = document.getElementById("kybQueryResults");
@@ -322,7 +327,7 @@ function openKybTxnModal(){
       <select id="kybTxnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
     </div>
     <div class="form-row">
-      <label>搜尋車型</label>
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
       <input type="text" id="kybTxnItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="kybTxnItemList"></div>
     </div>
@@ -362,12 +367,12 @@ function openKybTxnModal(){
     const listEl = document.getElementById("kybTxnItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
     const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
-    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.carModel)}</div>`).join("");
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
       selectedItemId = d.dataset.id;
       const it = kybItemsCache.find(i=>i.id===selectedItemId);
-      document.getElementById("kybTxnItemLabel").value = it.carModel;
+      document.getElementById("kybTxnItemLabel").value = kybItemLabel(it);
       listEl.classList.add("hidden");
       searchInput.value = "";
       refreshLocOptions();
