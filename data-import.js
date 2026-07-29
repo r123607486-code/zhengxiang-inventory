@@ -1,66 +1,6 @@
-  db.collection("users").doc(uid).update({ name: newName.trim() || u.name, role })
-    .catch(e=>alert("更新失敗："+e.message));
-}
-
-function deleteUser(uid, name){
-  if(uid === currentUser.uid){ alert("不能刪除自己目前登入中的帳號"); return; }
-  if(!confirm(`確定要刪除使用者「${name}」嗎？\n刪除後此帳號會完全無法登入系統（無法復原，需要重新建立帳號）。`)) return;
-  db.collection("users").doc(uid).delete()
-    .then(()=>alert("已刪除，此帳號已無法登入系統。"))
-    .catch(e=>alert("刪除失敗："+e.message));
-}
-
-document.getElementById("changePwBtn").addEventListener("click", async ()=>{
-  if(!currentUser) return;
-  const oldPw = prompt("請先輸入目前的密碼（用來確認身分）：");
-  if(oldPw === null) return;
-  const newPw = prompt("請輸入新密碼（至少6碼）：");
-  if(newPw === null) return;
-  if(!newPw || newPw.length < 6){ alert("新密碼至少要6碼"); return; }
-  try{
-    const email = currentUser.username + "@" + INTERNAL_EMAIL_DOMAIN;
-    const cred = firebase.auth.EmailAuthProvider.credential(email, oldPw);
-    await auth.currentUser.reauthenticateWithCredential(cred);
-    await auth.currentUser.updatePassword(newPw);
-    await db.collection("users").doc(currentUser.uid).update({ pwNote: newPw }).catch(()=>{});
-    alert("密碼修改成功，下次登入請用新密碼。");
-  }catch(e){
-    alert("修改失敗：" + (e.code==='auth/wrong-password' ? "目前密碼輸入錯誤" : e.message));
-  }
-});
-
-function openNewUserModal(){
-  const html = `
-    <div class="sheet-head"><h2>新增使用者</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
-    <div class="form-row"><label>姓名</label><input type="text" id="newUserName"></div>
-    <div class="form-row"><label>帳號（不用email格式，簡單英數即可）</label><input type="text" id="newUserUsername"></div>
-    <div class="form-row"><label>初始密碼</label><input type="text" id="newUserPassword" value="123456"></div>
-    <div class="form-row"><label>角色</label>
-      <select id="newUserRole"><option value="member">員工</option><option value="admin">管理者</option></select>
-    </div>
-    <div class="form-actions">
-      <button onclick="closeModal()">取消</button>
-      <button class="primary" id="newUserSubmitBtn">建立帳號</button>
-    </div>`;
-  openModal(html);
-  document.getElementById("newUserSubmitBtn").addEventListener("click", async ()=>{
-    const name = document.getElementById("newUserName").value.trim();
-    const uname = document.getElementById("newUserUsername").value.trim();
-    const pw = document.getElementById("newUserPassword").value;
-    const role = document.getElementById("newUserRole").value;
-    if(!name || !uname || !pw){ alert("請填寫完整資料"); return; }
-    const email = uname + "@" + INTERNAL_EMAIL_DOMAIN;
-    try{
-      const cred = await secondaryAuth.createUserWithEmailAndPassword(email, pw);
-      await db.collection("users").doc(cred.user.uid).set({name, username:uname, role, active:true, pwNote: pw});
-      await secondaryAuth.signOut();
-      closeModal();
-    }catch(e){
-      alert("建立失敗：" + e.message);
-    }
-  });
-}
-
+// ============================================================
+// 輪胎／KYB 資料匯入（含格式偵測）
+// ============================================================
 document.getElementById("clearDataBtn").addEventListener("click", async ()=>{
   if(!confirm("確定要清除所有「品項」與「儲位」資料嗎？（不會動到使用者帳號跟進出貨紀錄）這通常是為了重新匯入正確的資料才做，確定要繼續嗎？")) return;
   const statusEl = document.getElementById("importStatus");
@@ -86,6 +26,11 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
   const file = fileInput.files[0];
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, {type:"array"});
+
+  if(wb.Sheets["交接資訊"]){
+    await restoreHandoverBackup(wb, statusEl);
+    return;
+  }
 
   if(wb.Sheets["品項主檔"] && wb.Sheets["儲位主檔"]){
     await restoreFullBackup(wb, statusEl);
@@ -257,159 +202,6 @@ async function tryImportSailunSheet(wb, statusEl){
   return true;
 }
 
-async function restoreFullBackup(wb, statusEl){
-  const hasKybSheets = !!(wb.Sheets["KYB品項主檔"] || wb.Sheets["KYB儲位主檔"] || wb.Sheets["KYB進出貨紀錄"]);
-  const ok = confirm(
-    "偵測到這是「完整備份」檔案。\n\n" +
-    "還原會先清除目前所有品項、儲位、進出貨紀錄" + (hasKybSheets ? "（含輪胎與KYB兩邊）" : "（這份備份沒有KYB資料，只會還原輪胎，KYB維持現狀不動）") + "，換成這份備份「當時」的內容（含當時的成本、儲位、生產日期）。\n" +
-    "此動作無法復原，請確認這是你要的備份時間點。\n\n確定要繼續還原嗎？"
-  );
-  if(!ok){ statusEl.textContent = "已取消還原。"; return; }
-
-  statusEl.textContent = "清除目前資料中...";
-  const itemsSnap = await db.collection("items").get();
-  const locSnap = await db.collection("locations").get();
-  const txnSnap = await db.collection("transactions").get();
-  let allDocs = [...itemsSnap.docs, ...locSnap.docs, ...txnSnap.docs];
-  if(hasKybSheets){
-    const kybItemsSnap = await db.collection("kybItems").get();
-    const kybLocSnap = await db.collection("kybLocations").get();
-    const kybTxnSnap = await db.collection("kybTransactions").get();
-    allDocs = allDocs.concat(kybItemsSnap.docs, kybLocSnap.docs, kybTxnSnap.docs);
-  }
-  let done = 0;
-  while(done < allDocs.length){
-    const batch = db.batch();
-    allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
-    await batch.commit();
-    done += 400;
-  }
-
-  const itemRows = XLSX.utils.sheet_to_json(wb.Sheets["品項主檔"] || {});
-  const locRows = XLSX.utils.sheet_to_json(wb.Sheets["儲位主檔"] || {});
-  const txnRows = wb.Sheets["進出貨紀錄"] ? XLSX.utils.sheet_to_json(wb.Sheets["進出貨紀錄"]) : [];
-
-  let count = 0;
-  while(count < itemRows.length){
-    const batch = db.batch();
-    itemRows.slice(count, count+400).forEach(r=>{
-      const id = (r["id"] || "").toString().trim();
-      if(!id) return;
-      batch.set(db.collection("items").doc(id), {
-        brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
-        locations: parseLocSummaryText(r["儲位分布"]),
-        twenty: (r["20%"] === undefined || r["20%"] === null || r["20%"] === "") ? null : Number(r["20%"]),
-        sellPrice: (r["售價"] === undefined || r["售價"] === null || r["售價"] === "") ? null : Number(r["售價"]),
-        remark: r["備註"] || ""
-      });
-    });
-    await batch.commit();
-    count += 400;
-    statusEl.textContent = `還原品項中...${Math.min(count,itemRows.length)}/${itemRows.length}`;
-  }
-
-  count = 0;
-  while(count < locRows.length){
-    const batch = db.batch();
-    locRows.slice(count, count+400).forEach(r=>{
-      const code = (r["儲位代碼"] || "").toString().trim();
-      if(!code) return;
-      batch.set(db.collection("locations").doc(), {code});
-    });
-    await batch.commit();
-    count += 400;
-  }
-
-  count = 0;
-  while(count < txnRows.length){
-    const batch = db.batch();
-    txnRows.slice(count, count+400).forEach(r=>{
-      batch.set(db.collection("transactions").doc(), {
-        itemId: r["itemId"] || "",
-        type: r["type"] || "in",
-        qty: Number(r["qty"]) || 0,
-        loc: r["loc"] || "",
-        date: r["date"] || todayStr(),
-        operator: r["operator"] || "",
-        editLog: []
-      });
-    });
-    await batch.commit();
-    count += 400;
-    statusEl.textContent = `還原進出貨紀錄中...${Math.min(count,txnRows.length)}/${txnRows.length}`;
-  }
-
-  let kybItemRows = [], kybLocRows = [], kybTxnRows = [];
-  if(hasKybSheets){
-    kybItemRows = wb.Sheets["KYB品項主檔"] ? XLSX.utils.sheet_to_json(wb.Sheets["KYB品項主檔"]) : [];
-    kybLocRows = wb.Sheets["KYB儲位主檔"] ? XLSX.utils.sheet_to_json(wb.Sheets["KYB儲位主檔"]) : [];
-    kybTxnRows = wb.Sheets["KYB進出貨紀錄"] ? XLSX.utils.sheet_to_json(wb.Sheets["KYB進出貨紀錄"]) : [];
-
-    count = 0;
-    while(count < kybItemRows.length){
-      const batch = db.batch();
-      kybItemRows.slice(count, count+400).forEach(r=>{
-        const id = (r["id"] || "").toString().trim();
-        if(!id) return;
-        // 相容舊版備份（沒有廠牌/避震款式/年份代碼/料號/一線消費者售價這幾欄）：讀不到就留空，不會報錯
-        batch.set(db.collection("kybItems").doc(id), {
-          carModel: r["車型"] || "", brand: "KYB",
-          carMake: r["廠牌"] || "",
-          bucketType: r["避震款式"] || "",
-          yearCode: r["年份代碼"] || "",
-          partNo: r["料號"] || "",
-          locations: parseKybLocSummaryText(r["儲位分布"]),
-          catalogPrice: (r["一線消費者售價"] === undefined || r["一線消費者售價"] === null || r["一線消費者售價"] === "")
-            ? ((r["牌價"] === undefined || r["牌價"] === null || r["牌價"] === "") ? null : Number(r["牌價"]))
-            : Number(r["一線消費者售價"]),
-          warrantyPrice: (r["保修廠價"] === undefined || r["保修廠價"] === null || r["保修廠價"] === "")
-            ? ((r["保修廠"] === undefined || r["保修廠"] === null || r["保修廠"] === "") ? null : Number(r["保修廠"]))
-            : Number(r["保修廠價"]),
-          remark: r["備註"] || ""
-        });
-      });
-      await batch.commit();
-      count += 400;
-      statusEl.textContent = `還原KYB品項中...${Math.min(count,kybItemRows.length)}/${kybItemRows.length}`;
-    }
-
-    count = 0;
-    while(count < kybLocRows.length){
-      const batch = db.batch();
-      kybLocRows.slice(count, count+400).forEach(r=>{
-        const code = (r["儲位代碼"] || "").toString().trim();
-        if(!code) return;
-        batch.set(db.collection("kybLocations").doc(), {code});
-      });
-      await batch.commit();
-      count += 400;
-    }
-
-    count = 0;
-    while(count < kybTxnRows.length){
-      const batch = db.batch();
-      kybTxnRows.slice(count, count+400).forEach(r=>{
-        batch.set(db.collection("kybTransactions").doc(), {
-          itemId: r["itemId"] || "",
-          type: r["type"] || "in",
-          qty: Number(r["qty"]) || 0,
-          loc: r["loc"] || "",
-          date: r["date"] || todayStr(),
-          operator: r["operator"] || "",
-          editLog: []
-        });
-      });
-      await batch.commit();
-      count += 400;
-      statusEl.textContent = `還原KYB進出貨紀錄中...${Math.min(count,kybTxnRows.length)}/${kybTxnRows.length}`;
-    }
-  }
-
-  statusEl.textContent = `還原完成！共還原 ${itemRows.length} 筆品項、${locRows.length} 個儲位、${txnRows.length} 筆進出貨紀錄`
-    + (hasKybSheets ? `，以及KYB ${kybItemRows.length} 筆車型、${kybLocRows.length} 個儲位、${kybTxnRows.length} 筆進出貨紀錄` : "（這份備份沒有KYB資料，KYB維持原狀）")
-    + `（提醒：每筆紀錄過去的逐次編輯歷程無法透過Excel完整保留，但庫存數量、成本、儲位、生產日期都已正確還原）。`;
-}
-
 // 偵測KYB報價單格式：支援新版（避震款式/廠牌/車型/年份代碼/料號/保修廠價/一線消費者售價）
 // 跟舊版（車型/訂價/牌價/保修廠）兩種表頭，新版優先判斷。
 function detectKybSheet(wb){
@@ -536,3 +328,25 @@ document.getElementById("kybClearDataBtn").addEventListener("click", async ()=>{
   statusEl.textContent = "清除中...";
   const itemsSnap = await db.collection("kybItems").get();
   const locSnap = await db.collection("kybLocations").get();
+  const allDocs = [...itemsSnap.docs, ...locSnap.docs];
+  let done = 0;
+  while(done < allDocs.length){
+    const batch = db.batch();
+    allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
+    await batch.commit();
+    done += 400;
+  }
+  statusEl.textContent = `已清除 ${itemsSnap.size} 筆KYB車型與 ${locSnap.size} 筆儲位資料，可以重新選檔匯入了。`;
+});
+
+document.getElementById("kybImportBtn").addEventListener("click", async ()=>{
+  const fileInput = document.getElementById("kybImportFile");
+  const statusEl = document.getElementById("kybImportStatus");
+  if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
+  statusEl.textContent = "讀取檔案中...";
+  const file = fileInput.files[0];
+  const data = await file.arrayBuffer();
+  const wb = XLSX.read(data, {type:"array"});
+  if(await tryImportKybSheet(wb, statusEl)) return;
+  statusEl.textContent = "找不到可匯入的KYB報價單格式，請確認上傳的檔案含「車型」「一線消費者售價」欄位（或舊版的「車型」「訂價」「牌價」欄位）。";
+});

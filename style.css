@@ -52,6 +52,7 @@ main{padding:14px;max-width:960px;margin:0 auto;}
 .page{display:none;}
 .page.active{display:block;}
 
+/* 每一頁最上面的搜尋/篩選/統計區塊：固定在頂部，只有下面的清單/表格會捲動（跟S-TEAM那個查詢頁一樣的效果） */
 .page-head{position:sticky;top:calc(var(--header-h) + var(--nav-h));z-index:20;background:var(--bg);padding-top:2px;margin:0 -14px;padding-left:14px;padding-right:14px;}
 .page-head .toolbar:first-child{margin-top:0;}
 
@@ -66,6 +67,7 @@ main{padding:14px;max-width:960px;margin:0 auto;}
 
 .count{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
 
+/* 卡片(手機用/庫存查詢) */
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;}
 .card.card-nostock{opacity:.55;}
 .card.card-nostock .qty{color:var(--muted);}
@@ -82,8 +84,8 @@ table.grid .loc-line.loc-pending{font-weight:700;color:#c07a12;}
 .order-btn{display:inline-flex;align-items:center;gap:4px;background:var(--red);color:#fff;border:none;border-radius:20px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
 .order-btn svg{width:14px;height:14px;stroke:#fff;}
 .badge-dot{background:#e11d2e;color:#fff;border-radius:50%;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-left:4px;padding:0 4px;line-height:1;}
-.load-more-btn{display:block;width:100%;margin-top:10px;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13.5px;cursor:pointer;color:var(--red-dark);}
 
+/* 表格(庫存總表用) */
 .table-wrap{overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;}
 table.grid{width:100%;border-collapse:collapse;font-size:13px;min-width:720px;}
 table.grid th{background:#f7f2ef;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap;}
@@ -99,6 +101,7 @@ table.grid .loc-line.loc-expired{color:#a31e22;font-weight:700;}
 
 .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:13.5px;}
 
+/* modal */
 .overlay{position:fixed;inset:0;background:rgba(20,20,20,.45);z-index:30;display:flex;align-items:flex-end;justify-content:center;overscroll-behavior:contain;}
 .sheet{background:#fff;width:100%;max-width:640px;max-height:86vh;max-height:86svh;overflow-y:auto;overscroll-behavior:contain;border-radius:16px 16px 0 0;padding:18px;}
 @media (min-width:640px){.sheet{border-radius:16px;margin-bottom:40px;}}
@@ -123,3 +126,5 @@ table.grid .loc-line.loc-expired{color:#a31e22;font-weight:700;}
 
 .banner{background:#fff6e6;border:1px solid #f0d9a8;color:var(--amber);padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
 .banner button{border:1px solid var(--amber);background:#fff;color:var(--amber);border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;}
+
+.load-more-btn{width:100%;padding:10px;border:1px solid var(--border);background:#fff;border-radius:8px;font-size:13px;cursor:pointer;color:var(--muted);margin-top:6px;}

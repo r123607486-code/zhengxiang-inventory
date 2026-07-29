@@ -1,31 +1,226 @@
+// ============================================================
+// KYB：進銷貨管理 / 訂單管理 / 我的訂單 / 儲位管理
+// ============================================================
+document.getElementById("kybNewTxnBtn").addEventListener("click", openKybTxnModal);
+document.getElementById("kybNewItemBtn").addEventListener("click", openNewKybItemModal);
+document.getElementById("kybTxnFilterFrom").addEventListener("change", renderKybTxns);
+document.getElementById("kybTxnFilterTo").addEventListener("change", renderKybTxns);
+document.getElementById("kybTxnFilterSalesperson").addEventListener("input", renderKybTxns);
+document.getElementById("kybTxnFilterCustomer").addEventListener("input", renderKybTxns);
+document.getElementById("kybTxnFilterClearBtn").addEventListener("click", ()=>{
+  document.getElementById("kybTxnFilterFrom").value = "";
+  document.getElementById("kybTxnFilterTo").value = "";
+  document.getElementById("kybTxnFilterSalesperson").value = "";
+  document.getElementById("kybTxnFilterCustomer").value = "";
+  renderKybTxns();
+});
 
+function renderKybTxns(){
+  const body = document.getElementById("kybTxnBody");
+  const from = document.getElementById("kybTxnFilterFrom").value;
+  const to = document.getElementById("kybTxnFilterTo").value;
+  const salesQ = norm(document.getElementById("kybTxnFilterSalesperson").value);
+  const custQ = norm(document.getElementById("kybTxnFilterCustomer").value);
+
+  let list = kybTxnCache.slice();
+  if(from) list = list.filter(t=> t.date >= from);
+  if(to) list = list.filter(t=> t.date <= to);
+  if(salesQ) list = list.filter(t=> norm(t.salesperson || t.operator || "").includes(salesQ));
+  if(custQ) list = list.filter(t=> norm(t.customerName || "").includes(custQ));
+
+  // 新做的動作排越上方：優先用 createdAt(精確時間戳記)排序，沒有的舊資料用 date 當備援
+  list.sort((a,b)=> (b.createdAt||b.date||"").localeCompare(a.createdAt||a.date||""));
+
+  document.getElementById("kybTxnCount").textContent = `共 ${list.length} 筆`;
+  body.innerHTML = list.map(t=>{
+    const item = kybItemsCache.find(i=>i.id===t.itemId);
+    const label = item ? item.carModel : "(車型已刪除)";
+    return `<tr>
+      <td>${escapeHtml(t.date)}</td>
+      <td>${t.type==='in'?'進貨':'銷貨'}</td>
+      <td>${escapeHtml(label)}</td>
+      <td>${t.qty}</td>
+      <td>${escapeHtml(t.salesperson||"")}</td>
+      <td>${escapeHtml(t.customerName||"")}</td>
+      <td>${escapeHtml(t.operator||"")}</td>
+      <td><button data-edit="${t.id}">編輯</button> <button data-del="${t.id}">刪除</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">尚無紀錄</td></tr>`;
+
+  body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openEditKybTxnModal(b.dataset.edit)));
+  body.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", ()=>deleteKybTxn(b.dataset.del)));
+}
+
+function openKybTxnModal(){
+  const html = `
+    <div class="sheet-head"><h2>新增進貨／銷貨</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>類型</label>
+      <select id="kybTxnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
+    </div>
+    <div class="form-row">
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
+      <input type="text" id="kybTxnItemSearch" placeholder="例如 Altis">
+      <div class="autocomplete-list hidden" id="kybTxnItemList"></div>
+    </div>
+    <div class="form-row"><label>已選車型</label><input type="text" id="kybTxnItemLabel" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="kybTxnQty" min="1"></div>
+    <div class="form-row"><label>儲位</label>
+      <select id="kybTxnLoc"><option value="">請先選擇車型</option></select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="kybTxnSubmitBtn">確認送出</button>
+    </div>`;
+  openModal(html);
+  let selectedItemId = null;
+
+  function refreshLocOptions(){
+    const type = document.getElementById("kybTxnType").value;
+    const locSelect = document.getElementById("kybTxnLoc");
+    const it = kybItemsCache.find(i=>i.id===selectedItemId);
+    if(!it){ locSelect.innerHTML = `<option value="">請先選擇車型</option>`; return; }
+    if(type === "out"){
+      const options = kybLocList(it);
+      window._kybTxnOutOptions = options;
+      locSelect.innerHTML = options.length
+        ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("")
+        : `<option value="">這個車型目前沒有庫存可以出貨</option>`;
+    } else {
+      window._kybTxnOutOptions = [];
+      locSelect.innerHTML = kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
+    }
+  }
+  document.getElementById("kybTxnType").addEventListener("change", refreshLocOptions);
+
+  const searchInput = document.getElementById("kybTxnItemSearch");
+  searchInput.addEventListener("input", ()=>{
+    const q = norm(searchInput.value);
+    const listEl = document.getElementById("kybTxnItemList");
+    if(!q){ listEl.classList.add("hidden"); return; }
+    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
+    listEl.classList.toggle("hidden", matches.length===0);
+    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
+      selectedItemId = d.dataset.id;
+      const it = kybItemsCache.find(i=>i.id===selectedItemId);
+      document.getElementById("kybTxnItemLabel").value = kybItemLabel(it);
+      listEl.classList.add("hidden");
+      searchInput.value = "";
+      refreshLocOptions();
+    }));
+  });
+
+  document.getElementById("kybTxnSubmitBtn").addEventListener("click", ()=>{
+    if(!selectedItemId){ alert("請先搜尋並選擇一個車型"); return; }
+    const type = document.getElementById("kybTxnType").value;
+    const qty = Number(document.getElementById("kybTxnQty").value);
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+
+    let loc;
+    if(type === "out"){
+      const idx = Number(document.getElementById("kybTxnLoc").value);
+      const opt = (window._kybTxnOutOptions||[])[idx];
+      if(!opt){ alert("請選擇要出貨的儲位"); return; }
+      loc = opt.code;
+      if(qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不能出貨 ${qty}`); return; }
+    } else {
+      loc = document.getElementById("kybTxnLoc").value;
+      if(!loc){ alert("請選擇儲位"); return; }
+    }
+    submitKybTxn(selectedItemId, type, qty, loc);
+  });
+}
+
+async function submitKybTxn(itemId, type, qty, loc){
+  const itemRef = db.collection("kybItems").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  const cur = kybLocQty(allLocs[loc]);
+  const next = type === "in" ? cur + qty : cur - qty;
+  if(next < 0) throw new Error("庫存不足，無法出貨");
+  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
   await itemRef.update({locations: allLocs});
   await db.collection("kybTransactions").add({
-    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: []
+    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: [],
+    createdAt: new Date().toISOString()
   });
   closeModal();
 }
 
-async function editKybTxn(txnId){
+// 編輯進銷貨紀錄：日期、數量、儲位、業務、客戶姓名都可以改。
+// 儲位一定要從現有儲位清單選（不能自己打字）。
+// 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
+function openEditKybTxnModal(txnId){
   const t = kybTxnCache.find(x=>x.id===txnId);
   if(!t) return;
-  const newQty = Number(prompt(`目前數量為 ${t.qty}，請輸入修正後的數量：`, t.qty));
-  if(!newQty || newQty<=0) return;
-  const diff = newQty - t.qty;
+  const item = kybItemsCache.find(i=>i.id===t.itemId);
+  const itemLabel = item ? kybItemLabel(item) : "(車型已刪除，仍可編輯其他資訊，但無法改儲位)";
+  const html = `
+    <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>車型</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
+    <div class="form-row"><label>日期</label><input type="date" id="editKybTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
+    <div class="form-row"><label>數量</label><input type="number" id="editKybTxnQty" min="1" value="${t.qty}"></div>
+    <div class="form-row"><label>儲位</label>
+      <select id="editKybTxnLoc">${kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
+    </div>
+    <div class="form-row"><label>業務</label><input type="text" id="editKybTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
+    <div class="form-row"><label>客戶姓名</label><input type="text" id="editKybTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="editKybTxnSaveBtn">儲存</button>
+    </div>`;
+  openModal(html);
+
+  document.getElementById("editKybTxnSaveBtn").addEventListener("click", async ()=>{
+    const newDate = document.getElementById("editKybTxnDate").value || todayStr();
+    const newQty = Number(document.getElementById("editKybTxnQty").value);
+    const newLoc = document.getElementById("editKybTxnLoc").value;
+    const newSalesperson = document.getElementById("editKybTxnSalesperson").value.trim();
+    const newCustomerName = document.getElementById("editKybTxnCustomerName").value.trim();
+    if(!newQty || newQty<=0){ alert("請輸入正確的數量"); return; }
+    if(!newLoc){ alert("請選擇儲位"); return; }
+    try{
+      await saveEditKybTxn(t, { date:newDate, qty:newQty, loc:newLoc, salesperson:newSalesperson, customerName:newCustomerName });
+      closeModal();
+    }catch(e){
+      alert("儲存失敗："+e.message);
+    }
+  });
+}
+
+async function saveEditKybTxn(t, next){
   const itemRef = db.collection("kybItems").doc(t.itemId);
   const itemSnap = await itemRef.get();
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
-    const sign = t.type === "in" ? 1 : -1;
-    const next = kybLocQty(allLocs[t.loc]) + diff*sign;
-    if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
-    await itemRef.update({locations: allLocs});
+
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
+    const oldSign = t.type === "in" ? -1 : 1;
+    const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
+    if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+
+    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
+    const newSign = t.type === "in" ? 1 : -1;
+    const curAtNewLoc = kybLocQty(allLocs[next.loc]);
+    const resultQty = curAtNewLoc + next.qty*newSign;
+    if(t.type === "out" && resultQty < 0){
+      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成銷貨 ${next.qty}`);
+    }
+    if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
+
+    await itemRef.update({ locations: allLocs });
   }
-  await db.collection("kybTransactions").doc(txnId).update({
-    qty: newQty,
+
+  await db.collection("kybTransactions").doc(t.id).update({
+    date: next.date, qty: next.qty, loc: next.loc,
+    salesperson: next.salesperson, customerName: next.customerName,
     editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: t.qty, after: newQty, time: new Date().toISOString(), by: currentUser.name
+      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
+      time: new Date().toISOString(), by: currentUser.name
     })
   });
 }
@@ -178,7 +373,8 @@ async function submitKybOrderTxn(order, loc){
     date: todayStr(), operator: currentUser.name,
     salesperson: order.requestedByName || "", customerName: order.customerName || "",
     customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-    orderId: order.id, editLog: []
+    orderId: order.id, editLog: [],
+    createdAt: new Date().toISOString()
   });
 }
 
@@ -306,25 +502,3 @@ function deleteKybLocation(locId, code){
     db.collection("kybLocations").doc(locId).delete();
   }
 }
-
-function openModal(html){
-  document.getElementById("modalSheet").innerHTML = html;
-  document.getElementById("modalOverlay").classList.remove("hidden");
-  const scrollY = window.scrollY;
-  document.body.dataset.scrollY = scrollY;
-  document.body.style.position = "fixed";
-  document.body.style.top = `-${scrollY}px`;
-  document.body.style.width = "100%";
-}
-function closeModal(){
-  document.getElementById("modalOverlay").classList.add("hidden");
-  document.getElementById("modalSheet").innerHTML = "";
-  const scrollY = Number(document.body.dataset.scrollY || 0);
-  document.body.style.position = "";
-  document.body.style.top = "";
-  document.body.style.width = "";
-  window.scrollTo(0, scrollY);
-}
-document.getElementById("modalOverlay").addEventListener("click", (e)=>{
-  if(e.target.id === "modalOverlay") closeModal();
-});

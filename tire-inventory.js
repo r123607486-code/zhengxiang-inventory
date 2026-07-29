@@ -1,6 +1,110 @@
 // ============================================================
-// 庫存總表
+// 輪胎：庫存查詢 / 庫存總表 / 儲位與價格編輯 / 匯出
 // ============================================================
+document.getElementById("queryBox").addEventListener("input", ()=>{ queryVisibleCount = 200; renderQuery(); });
+
+function renderQuery(){
+  const box = document.getElementById("queryResults");
+  const countEl = document.getElementById("queryCount");
+  const q = norm(document.getElementById("queryBox").value);
+
+  let list = itemsCache.slice();
+  if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
+  const sortRank = (it)=> hasPendingStock(it) ? 0 : (totalQty(it)>0 ? 1 : 2);
+  list.sort((a,b)=> sortRank(a) - sortRank(b));
+
+  const inStockCount = list.filter(it=>totalQty(it)>0).length;
+  countEl.textContent = q ? `找到 ${list.length} 筆（有庫存 ${inStockCount} 筆）` : `共 ${list.length} 筆品項（有庫存 ${inStockCount} 筆）`;
+
+  box.innerHTML = list.slice(0,queryVisibleCount).map(it=>{
+    const qty = totalQty(it);
+    const noStock = qty <= 0;
+    const pending = hasPendingStock(it);
+    return `<div class="card${noStock?' card-nostock':''}${pending?' card-pending':''}">
+      <div class="code-row">
+        <div class="code">${escapeHtml(it.spec)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</div>
+        ${noStock ? '' : `<button class="order-btn" data-id="${it.id}">${ICONS.cart}叫貨</button>`}
+      </div>
+      <div class="sub">${escapeHtml(it.brand)}　${escapeHtml(it.model||"")}</div>
+      <div class="qty">庫存 ${qty}${it.twenty!=null?`　　20% ${it.twenty}`:""}${it.sellPrice!=null?`　　售價 ${it.sellPrice}`:""}</div>
+      <div class="sub">儲位：${escapeHtml(locSummary(it))}</div>
+    </div>`;
+  }).join("") || `<div class="empty">查無符合的品項</div>`;
+
+  if(list.length > queryVisibleCount){
+    box.innerHTML += `<button id="queryLoadMoreBtn" class="load-more-btn">顯示更多（還有 ${list.length - queryVisibleCount} 筆，目前顯示 ${queryVisibleCount} 筆）</button>`;
+  }
+
+  box.querySelectorAll(".order-btn").forEach(b=>{
+    b.addEventListener("click", ()=> openOrderModal(b.dataset.id));
+  });
+  const queryLoadMoreBtn = document.getElementById("queryLoadMoreBtn");
+  if(queryLoadMoreBtn) queryLoadMoreBtn.addEventListener("click", ()=>{ queryVisibleCount += 200; renderQuery(); });
+}
+
+function openOrderModal(itemId){
+  const item = itemsCache.find(i=>i.id===itemId);
+  if(!item) return;
+  const options = locDetailList(item);
+  const totalAvail = totalQty(item);
+  const html = `
+    <div class="sheet-head"><h2>叫貨：${escapeHtml(item.spec)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>品牌／型號</label><input type="text" value="${escapeHtml(item.brand)} ${escapeHtml(item.model||'')}" disabled></div>
+    <div class="form-row"><label>目前總庫存</label><input type="text" value="${totalAvail}" disabled></div>
+    <div class="form-row"><label>選擇儲位／批次</label>
+      <select id="orderLoc">${options.length ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("") : `<option value="">目前無庫存</option>`}</select>
+    </div>
+    <div class="form-row"><label>數量</label>
+      <select id="orderQty"></select>
+    </div>
+    <div class="form-row"><label>客戶姓名</label><input type="text" id="orderCustomerName"></div>
+    <div class="form-row"><label>聯絡方式</label><input type="text" id="orderCustomerContact"></div>
+    <div class="form-row"><label>備註</label><input type="text" id="orderCustomerNote"></div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="orderSubmitBtn">送出叫貨</button>
+    </div>`;
+  openModal(html);
+
+  function refreshQtyOptions(){
+    const idx = Number(document.getElementById("orderLoc").value);
+    const opt = options[idx];
+    const qtySelect = document.getElementById("orderQty");
+    if(!opt){ qtySelect.innerHTML = `<option value="0">目前無庫存</option>`; return; }
+    qtySelect.innerHTML = Array.from({length:opt.qty},(_,i)=>i+1).map(n=>`<option value="${n}">${n}</option>`).join("");
+  }
+  const locSelect = document.getElementById("orderLoc");
+  if(options.length) locSelect.addEventListener("change", refreshQtyOptions);
+  refreshQtyOptions();
+
+  document.getElementById("orderSubmitBtn").addEventListener("click", async ()=>{
+    const idx = Number(document.getElementById("orderLoc").value);
+    const opt = options[idx];
+    const qty = Number(document.getElementById("orderQty").value);
+    const customerName = document.getElementById("orderCustomerName").value.trim();
+    const customerContact = document.getElementById("orderCustomerContact").value.trim();
+    const customerNote = document.getElementById("orderCustomerNote").value.trim();
+    if(!opt){ alert("這個品項目前沒有庫存可以叫貨"); return; }
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    if(qty > opt.qty){ alert(`這一批目前只有 ${opt.qty}，不能叫超過這個數量`); return; }
+    if(!customerName){ alert("請輸入客戶姓名"); return; }
+    try{
+      await db.collection("orders").add({
+        itemId: item.id,
+        itemLabel: `${item.brand} ${item.spec}（${item.model||""}）`,
+        qty, loc: opt.code, batchDate: opt.date || null,
+        customerName, customerContact, customerNote,
+        requestedByUid: currentUser.uid, requestedByName: currentUser.name,
+        status: "pending", requestedAt: new Date().toISOString()
+      });
+      closeModal();
+      alert("已送出，等待管理者確認出貨。");
+    }catch(e){
+      alert("送出失敗："+e.message);
+    }
+  });
+}
+
 let masterExpireYears = null;
 document.getElementById("masterBox").addEventListener("input", renderMaster);
 document.getElementById("applyExpireBtn").addEventListener("click", ()=>{
@@ -187,4 +291,19 @@ function editSellPrice(itemId){
   const num = Number(val);
   if(isNaN(num)){ alert("請輸入數字"); return; }
   db.collection("items").doc(itemId).update({ sellPrice: num }).catch(e=>alert("更新失敗："+e.message));
+}
+
+document.getElementById("exportFilteredBtn").addEventListener("click", ()=>{
+  exportItemsToExcel(window._masterFilteredList || [], "庫存總表_篩選結果");
+});
+
+function exportItemsToExcel(list, filename){
+  const rows = list.map(it=>({
+    品牌: it.brand, 型號: it.model, 規格: it.spec, 總量: totalQty(it),
+    儲位分布: locSummary(it), "20%": it.twenty!=null?it.twenty:"", 售價: it.sellPrice!=null?it.sellPrice:"", 備註: it.remark||""
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "資料");
+  XLSX.writeFile(wb, `${filename}_${todayStr()}.xlsx`);
 }
