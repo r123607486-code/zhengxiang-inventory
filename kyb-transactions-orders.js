@@ -150,6 +150,7 @@ async function submitKybTxn(itemId, type, qty, loc){
     itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: [],
     createdAt: new Date().toISOString()
   });
+  await refreshKybViews();
   closeModal();
 }
 
@@ -228,6 +229,7 @@ async function saveEditKybTxn(t, next){
       time: new Date().toISOString(), by: currentUser.name
     })
   });
+  await refreshKybViews();
 }
 
 async function deleteKybTxn(txnId){
@@ -245,6 +247,7 @@ async function deleteKybTxn(txnId){
     await itemRef.update({locations: allLocs});
   }
   await db.collection("kybTransactions").doc(txnId).delete();
+  await refreshKybViews();
 }
 
 function openNewKybItemModal(){

@@ -287,19 +287,48 @@ function startListeners(){
   }
 }
 
+function startRealtimeListener(makeQuery, onData, label){
+  const subscribe = ()=>{
+    makeQuery().onSnapshot(onData, error=>{
+      console.error("[" + label + "] 即時同步失敗：", error);
+      window.setTimeout(subscribe, 3000);
+    });
+  };
+  subscribe();
+}
+
+async function refreshTireViews(){
+  const [itemsSnap, txnsSnap] = await Promise.all([
+    db.collection("items").get(),
+    db.collection("transactions").orderBy("date","desc").limit(200).get()
+  ]);
+  itemsCache = itemsSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  txnCache = txnsSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderQuery(); renderMaster(); renderTxns();
+}
+
+async function refreshKybViews(){
+  const [itemsSnap, txnsSnap] = await Promise.all([
+    db.collection("kybItems").get(),
+    db.collection("kybTransactions").orderBy("date","desc").limit(200).get()
+  ]);
+  kybItemsCache = itemsSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  kybTxnCache = txnsSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderKybQuery(); renderKybMaster(); renderKybTxns();
+}
 function startTireListeners(){
-  db.collection("items").onSnapshot(snap=>{
+  startRealtimeListener(()=>db.collection("items"), snap=>{
     itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderQuery(); renderMaster();
-  });
-  db.collection("locations").onSnapshot(snap=>{
+  }, "tire items");
+  startRealtimeListener(()=>db.collection("locations"), snap=>{
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
-  });
-  db.collection("transactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+  }, "tire locations");
+  startRealtimeListener(()=>db.collection("transactions").orderBy("date","desc").limit(200), snap=>{
     txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderTxns();
-  });
+  }, "tire transactions");
   if(currentUser.role === "admin"){
     db.collection("orders").where("status","==","pending").onSnapshot(snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -329,18 +358,18 @@ function startTireListeners(){
 }
 
 function startKybListeners(){
-  db.collection("kybItems").onSnapshot(snap=>{
+  startRealtimeListener(()=>db.collection("kybItems"), snap=>{
     kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybQuery(); renderKybMaster();
-  });
-  db.collection("kybLocations").onSnapshot(snap=>{
+  }, "kyb items");
+  startRealtimeListener(()=>db.collection("kybLocations"), snap=>{
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
-  });
-  db.collection("kybTransactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+  }, "kyb locations");
+  startRealtimeListener(()=>db.collection("kybTransactions").orderBy("date","desc").limit(200), snap=>{
     kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybTxns();
-  });
+  }, "kyb transactions");
   if(currentUser.role === "admin"){
     db.collection("kybOrders").where("status","==","pending").onSnapshot(snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));

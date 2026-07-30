@@ -187,6 +187,7 @@ async function submitTxn(itemId, type, qty, loc, batchDate){
     itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: [],
     createdAt: new Date().toISOString()
   });
+  await refreshTireViews();
   closeModal();
 }
 
@@ -281,6 +282,7 @@ async function saveEditTxn(t, next){
       time: new Date().toISOString(), by: currentUser.name
     })
   });
+  await refreshTireViews();
 }
 
 async function deleteTxn(txnId){
@@ -307,6 +309,7 @@ async function deleteTxn(txnId){
     txnId, action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
   });
   await db.collection("transactions").doc(txnId).delete();
+  await refreshTireViews();
 }
 
 function openNewItemModal(){
