@@ -121,7 +121,7 @@ function openTxnModal(){
       refreshLocOptions();
     }));
   });
-  document.getElementById("txnSubmitBtn").addEventListener("click", ()=>{
+  document.getElementById("txnSubmitBtn").addEventListener("click", async ()=>{
     if(!selectedItemId){ alert("請先搜尋並選擇一個品項"); return; }
     const type = document.getElementById("txnType").value;
     const qty = Number(document.getElementById("txnQty").value);
@@ -139,7 +139,12 @@ function openTxnModal(){
       if(!loc){ alert("請選擇儲位"); return; }
       batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
-    submitTxn(selectedItemId, type, qty, loc, batchDate);
+    try{
+      await submitTxn(selectedItemId, type, qty, loc, batchDate);
+    }catch(e){
+      console.error("輪胎進銷貨送出失敗：", e);
+      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
+    }
   });
 }
 
