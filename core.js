@@ -124,6 +124,27 @@ function escapeHtml(s){
   return (s==null?"":s.toString()).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// 業務欄位共用建構：管理者看到的是下拉選單（選項來自使用者管理裡的員工＋管理者），
+// 非管理者（員工自己新增進銷貨）維持原本的自由輸入文字框。
+// 若現有值（例如編輯舊紀錄）不在使用者清單裡（例如已離職、舊自由輸入的名字），
+// 會否列一個「現有值」的選項並預選，避免不小心切換選單後把舊資料消失。
+function salespersonFieldHtml(id, currentValue){
+  if(currentUser && currentUser.role === "admin"){
+    const names = (usersCache||[]).filter(u=> u.active !== false).map(u=> (u.name||"").trim()).filter(Boolean);
+    const uniqueNames = [...new Set(names)].sort((a,b)=> a.localeCompare(b, "zh-Hant"));
+    let matched = false;
+    let optionsHtml = `<option value="">請選擇</option>` + uniqueNames.map(n=>{
+      if(n === currentValue) matched = true;
+      return `<option value="${escapeHtml(n)}" ${n===currentValue?'selected':''}>${escapeHtml(n)}</option>`;
+    }).join("");
+    if(currentValue && !matched){
+      optionsHtml += `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue)}（現有值，不在使用者清單中）</option>`;
+    }
+    return `<select id="${id}">${optionsHtml}</select>`;
+  }
+  return `<input type="text" id="${id}" value="${escapeHtml(currentValue||"")}" placeholder="銷貨時會自動帶入登入者姓名，可自行修改">`;
+}
+
 function kybLocQty(loc){ return Number(loc)||0; }
 function kybTotalQty(item){
   const locs = item.locations || {};
