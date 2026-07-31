@@ -85,10 +85,11 @@ table.grid .loc-line.loc-pending{font-weight:700;color:#c07a12;}
 .order-btn svg{width:14px;height:14px;stroke:#fff;}
 .badge-dot{background:#e11d2e;color:#fff;border-radius:50%;min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-left:4px;padding:0 4px;line-height:1;}
 
-/* 表格(庫存總表用) */
-.table-wrap{overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;}
+/* 表格(庫存總表等用)：改成固定高度、自己捲動（垂直＋水平），左右捲動條不用捲到整頁最下面才能看到。
+   max-height 配合頂部 sticky 的 header+tabs+page-head，失去那小段空間就直接在表格自己的框框裡捲動。 */
+.table-wrap{overflow:auto;background:#fff;border:1px solid var(--border);border-radius:12px;max-height:calc(100vh - var(--header-h) - var(--nav-h) - 120px);max-height:calc(100svh - var(--header-h) - var(--nav-h) - 120px);}
 table.grid{width:100%;border-collapse:collapse;font-size:13px;min-width:720px;}
-table.grid th{background:#f7f2ef;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap;}
+table.grid th{background:#f7f2ef;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap;z-index:1;}
 table.grid td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
 table.grid tr.expire{background:#fdecec;}
 table.grid tr.expire td{color:#a31e22;}
