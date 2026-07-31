@@ -77,7 +77,7 @@ function openTxnModal(){
     </div>
     <div class="form-row"><label id="txnPriceLabel">單價</label><input type="number" id="txnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入，不會自動帶入品項售價"></div>
     <div class="count" id="txnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label><input type="text" id="txnSalesperson" placeholder="銷貨時會自動帶入登入者姓名，可自行修改"></div>
+    <div class="form-row"><label>業務</label>${salespersonFieldHtml("txnSalesperson", "")}</div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -389,7 +389,7 @@ function openEditTxnModal(txnId){
     </div>
     <div class="form-row"><label id="editTxnPriceLabel">單價</label><input type="number" id="editTxnPrice" min="0" step="0.01" value="${initPrice}"></div>
     <div class="count" id="editTxnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label><input type="text" id="editTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
+    <div class="form-row"><label>業務</label>${salespersonFieldHtml("editTxnSalesperson", t.salesperson||"")}</div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
