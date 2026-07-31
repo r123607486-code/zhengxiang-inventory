@@ -107,6 +107,7 @@
       <div class="page-head">
         <div class="toolbar">
           <button class="primary" id="newTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="newAdjustBtn">+ 庫存校正</button>
           <button id="newItemBtn">+ 新增品項</button>
         </div>
         <div class="toolbar">
@@ -121,7 +122,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
+          <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
           <tbody id="txnBody"></tbody>
         </table>
       </div>
@@ -134,7 +135,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
           <tbody id="ordersBody"></tbody>
         </table>
       </div>
@@ -147,7 +148,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>品項</th><th>數量</th><th>客戶</th><th>狀態</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
           <tbody id="myOrdersBody"></tbody>
         </table>
       </div>
