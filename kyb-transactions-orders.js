@@ -75,7 +75,7 @@ function openKybTxnModal(){
     </div>
     <div class="form-row"><label id="kybTxnPriceLabel">單價</label><input type="number" id="kybTxnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入"></div>
     <div class="count" id="kybTxnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label><input type="text" id="kybTxnSalesperson" placeholder="銷貨時會自動帶入登入者姓名，可自行修改"></div>
+    <div class="form-row"><label>業務</label>${salespersonFieldHtml("kybTxnSalesperson", "")}</div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="kybTxnSubmitBtn">確認送出</button>
@@ -316,7 +316,7 @@ function openEditKybTxnModal(txnId){
     </div>
     <div class="form-row"><label id="editKybTxnPriceLabel">單價</label><input type="number" id="editKybTxnPrice" min="0" step="0.01" value="${initPrice}"></div>
     <div class="count" id="editKybTxnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label><input type="text" id="editKybTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
+    <div class="form-row"><label>業務</label>${salespersonFieldHtml("editKybTxnSalesperson", t.salesperson||"")}</div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editKybTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
