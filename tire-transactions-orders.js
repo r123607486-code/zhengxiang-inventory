@@ -77,6 +77,7 @@ function openTxnModal(){
     </div>
     <div class="form-row"><label id="txnPriceLabel">單價</label><input type="number" id="txnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入，不會自動帶入品項售價"></div>
     <div class="count" id="txnPricePreview" style="color:#2451a3;"></div>
+    <div class="form-row"><label>業務</label><input type="text" id="txnSalesperson" placeholder="銷貨時會自動帶入登入者姓名，可自行修改"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -92,6 +93,8 @@ function openTxnModal(){
     if(type === "out"){
       prodDateRow.classList.add("hidden");
       document.getElementById("txnProdDate").value = "";
+      const spEl = document.getElementById("txnSalesperson");
+      if(spEl && !spEl.value.trim()) spEl.value = currentUser.name;
     } else {
       prodDateRow.classList.remove("hidden");
     }
@@ -137,6 +140,7 @@ function openTxnModal(){
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
     const priceInput = Number(document.getElementById("txnPrice").value) || 0;
     const taxMode = document.getElementById("txnTaxMode").value;
+    const salesperson = document.getElementById("txnSalesperson").value.trim();
 
     let loc, batchDate;
     if(type === "out"){
@@ -151,7 +155,7 @@ function openTxnModal(){
       batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
     try{
-      await submitTxn(selectedItemId, type, qty, loc, batchDate, priceInput, taxMode);
+      await submitTxn(selectedItemId, type, qty, loc, batchDate, priceInput, taxMode, salesperson);
     }catch(e){
       console.error("輪胎進銷貨送出失敗：", e);
       alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
@@ -159,7 +163,7 @@ function openTxnModal(){
   });
 }
 
-async function submitTxn(itemId, type, qty, loc, batchDate, priceInput, taxMode){
+async function submitTxn(itemId, type, qty, loc, batchDate, priceInput, taxMode, salesperson){
   const itemRef = db.collection("items").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -198,6 +202,7 @@ async function submitTxn(itemId, type, qty, loc, batchDate, priceInput, taxMode)
   await db.collection("transactions").add({
     itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: [],
     createdAt: new Date().toISOString(),
+    salesperson: salesperson || "",
     unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
     subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
   });
@@ -754,19 +759,42 @@ function cancelOrder(orderId){
   }).catch(e=>alert("取消失敗："+e.message));
 }
 
+// 我的訂單：除了自己叫貨的訂單（待確認／已出貨／已取消）之外，也合併顯示自己名下直接在進銷貨管理新增的銷貨紀錄（非叫貨流程），
+// 依時間新舊排序，讓員工隨時可以查詢自己的出貨狀況。
 function renderMyOrders(){
   const body = document.getElementById("myOrdersBody");
   if(!body) return;
-  const sorted = myOrdersCache.slice().sort((a,b)=> (b.requestedAt||"").localeCompare(a.requestedAt||""));
-  document.getElementById("myOrdersCount").textContent = `共 ${sorted.length} 筆`;
-  const statusLabel = { pending:"待確認", confirmed:"已出貨", cancelled:"已取消" };
-  body.innerHTML = sorted.map(o=>`<tr>
-    <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
+  const orderRows = myOrdersCache.map(o=>({
+    time: o.requestedAt || "",
+    itemLabel: o.itemLabel || "",
+    qty: o.qty,
+    unitPrice: o.unitPrice,
+    total: o.total,
+    customerName: o.customerName || "",
+    statusText: ({ pending:"待確認", confirmed:"已出貨", cancelled:"已取消" })[o.status] || o.status
+  }));
+  const salesRows = (mySalesTxnCache||[]).map(t=>{
+    const item = itemsCache.find(i=>i.id===t.itemId);
+    const label = item ? `${item.brand} ${item.spec}` : "(品項已刪除)";
+    return {
+      time: t.createdAt || t.date || "",
+      itemLabel: label,
+      qty: t.qty,
+      unitPrice: t.unitPrice,
+      total: t.total,
+      customerName: t.customerName || "",
+      statusText: t.type === "in" ? "進貨紀錄" : "銷貨紀錄"
+    };
+  });
+  const merged = orderRows.concat(salesRows).sort((a,b)=> (b.time||"").localeCompare(a.time||""));
+  document.getElementById("myOrdersCount").textContent = `共 ${merged.length} 筆`;
+  body.innerHTML = merged.map(o=>`<tr>
+    <td>${escapeHtml((o.time||"").slice(0,16).replace("T"," "))}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
     <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
     <td>${o.total!=null?o.total:"-"}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
-    <td>${statusLabel[o.status]||o.status}</td>
+    <td>${escapeHtml(o.statusText||"")}</td>
   </tr>`).join("") || `<tr><td colspan="7" class="empty">尚無訂單紀錄</td></tr>`;
 }
