@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>正享有限公司庫存管理系統</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260801f">
 </head>
 <body>
 
@@ -304,7 +304,7 @@
         <input type="file" id="kybImportFile" accept=".xlsx">
         <button class="primary" id="kybImportBtn">開始匯入</button>
       </div>
-      <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桐／藍桐／深藍桐會依「車型＋避震款式」分別比對，不會互相覆蓋。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桐匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
+      <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桐／藍桐／深藍桐會依「車型＋避震款式」分別比對，不會互相覆蒙。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桐匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
     </section>
   </main>
 </div>
@@ -321,16 +321,16 @@
 <!-- SheetJS：用來匯出 Excel，免費、純前端 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-<script src="firebase-config.js?v=20260801e"></script>
-<script src="core.js?v=20260801e"></script>
-<script src="modal-shared.js?v=20260801e"></script>
-<script src="tire-inventory.js?v=20260801e"></script>
-<script src="tire-transactions-orders.js?v=20260801e"></script>
-<script src="locations-users.js?v=20260801e"></script>
-<script src="data-import.js?v=20260801e"></script>
-<script src="backup-restore.js?v=20260801e"></script>
-<script src="handover-backup.js?v=20260801e"></script>
-<script src="kyb-inventory.js?v=20260801e"></script>
-<script src="kyb-transactions-orders.js?v=20260801e"></script>
+<script src="firebase-config.js?v=20260801f"></script>
+<script src="core.js?v=20260801f"></script>
+<script src="modal-shared.js?v=20260801f"></script>
+<script src="tire-inventory.js?v=20260801f"></script>
+<script src="tire-transactions-orders.js?v=20260801f"></script>
+<script src="locations-users.js?v=20260801f"></script>
+<script src="data-import.js?v=20260801f"></script>
+<script src="backup-restore.js?v=20260801f"></script>
+<script src="handover-backup.js?v=20260801f"></script>
+<script src="kyb-inventory.js?v=20260801f"></script>
+<script src="kyb-transactions-orders.js?v=20260801f"></script>
 </body>
 </html>
