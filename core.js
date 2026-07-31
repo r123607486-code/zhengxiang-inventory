@@ -2,10 +2,10 @@
 // 正享有限公司庫存管理系統 — 共用核心（常數／狀態／工具函式／登入／分類切換／分頁／監聽器啟動）
 // ============================================================
 
-// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檻年限（1-9年）才會反紅，不再自動顯示。
+// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檸年限（1-9年）才會反紅，不再自動顯示。
 const DEFAULT_BRANDS = [
-  "賽輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
-  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
+  "賣輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
+  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克NEXEN",
   "路德斯通ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諾ZESTINO"
 ];
 
@@ -153,25 +153,70 @@ function txnTypeLabel(t){
 }
 
 // ---- 金額／稅別共用計算：taxMode 為 "included"（稅內含）、"excluded"（稅外加）、"none"（不計稅）----
-// 稅率固定 5%，所有金額四捨五入到整數。
-function calcAmounts(qty, unitPrice, taxMode){
+// 稅率固定 5%，所有金額四舍五入到小數點後兩位。
+// priceInput 的意義依 taxMode 而不同：
+//   - "excluded"／"none"：priceInput 是使用者填的「單價」，系統算出總額。
+//   - "included"：priceInput 是使用者填的「總價」（這筆數量的整筆含稅金額），系統反推單價（未稅單價）。
+// 回傳的 unitPrice 一律代表「未稅單價」，方便報表統一比較。
+function round2(n){ return Math.round((Number(n)||0) * 100) / 100; }
+function calcAmounts(qty, priceInput, taxMode){
   const q = Number(qty) || 0;
-  const p = Number(unitPrice) || 0;
+  const p = Number(priceInput) || 0;
   if(taxMode === "excluded"){
-    const subtotal = Math.round(q * p);
-    const taxAmount = Math.round(subtotal * 0.05);
-    return { subtotal, taxAmount, total: subtotal + taxAmount };
+    const subtotal = round2(q * p);
+    const taxAmount = round2(subtotal * 0.05);
+    const total = round2(subtotal + taxAmount);
+    return { unitPrice: p, subtotal, taxAmount, total };
   }
   if(taxMode === "included"){
-    const total = Math.round(q * p);
-    const taxAmount = Math.round(total - total / 1.05);
-    return { subtotal: total - taxAmount, taxAmount, total };
+    const total = round2(p);
+    const subtotal = round2(total / 1.05);
+    const taxAmount = round2(total - subtotal);
+    const unitPrice = q ? round2(subtotal / q) : 0;
+    return { unitPrice, subtotal, taxAmount, total };
   }
-  const total = Math.round(q * p);
-  return { subtotal: total, taxAmount: 0, total };
+  const subtotal = round2(q * p);
+  return { unitPrice: p, subtotal, taxAmount: 0, total: subtotal };
 }
 function taxModeLabel(m){
   return { included: "稅內含", excluded: "稅外加", none: "不計稅" }[m] || "-";
+}
+
+// ---- 表單共用：價格欄位隨稅別切換「單價／總價」標籤，並即時顯示換算結果 ----
+// ids: { qty, taxMode, price, label, preview }，對應表單裡對應欄位的 element id。
+function wirePriceCalc(ids){
+  const qtyEl = document.getElementById(ids.qty);
+  const taxModeEl = document.getElementById(ids.taxMode);
+  const priceEl = document.getElementById(ids.price);
+  const labelEl = document.getElementById(ids.label);
+  const previewEl = document.getElementById(ids.preview);
+  function update(){
+    const taxMode = taxModeEl.value;
+    if(taxMode === "included"){
+      labelEl.textContent = "總價（這筆數量的含稅總金額）";
+      priceEl.placeholder = "例如 1000";
+    } else {
+      labelEl.textContent = "單價";
+      priceEl.placeholder = "";
+    }
+    const qty = Number(qtyEl.value) || 0;
+    const priceVal = Number(priceEl.value) || 0;
+    if(!previewEl) return;
+    if(!qty || !priceVal){ previewEl.textContent = ""; return; }
+    const r = calcAmounts(qty, priceVal, taxMode);
+    if(taxMode === "included"){
+      previewEl.textContent = `換算單價（未稅）：${r.unitPrice}　（未稅小計 ${r.subtotal}，稅額 ${r.taxAmount}）`;
+    } else if(taxMode === "excluded"){
+      previewEl.textContent = `總額：${r.total}　（未稅小計 ${r.subtotal}，稅額 ${r.taxAmount}）`;
+    } else {
+      previewEl.textContent = `總額：${r.total}`;
+    }
+  }
+  [qtyEl, taxModeEl, priceEl].forEach(el=>{
+    el.addEventListener("input", update);
+    el.addEventListener("change", update);
+  });
+  update();
 }
 
 document.getElementById("loginBtn").addEventListener("click", doLogin);
