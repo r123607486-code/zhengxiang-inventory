@@ -37,7 +37,7 @@ function renderKybTxns(){
     const label = item ? item.carModel : "(車型已刪除)";
     return `<tr>
       <td>${escapeHtml(t.date)}</td>
-      <td>${t.type==='in'?'進貨':'銷貨'}</td>
+      <td>${txnTypeLabel(t)}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
@@ -165,7 +165,7 @@ function openEditKybTxnModal(txnId){
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
-    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${txnTypeLabel(t)}" disabled></div>
     <div class="form-row"><label>日期</label><input type="date" id="editKybTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
     <div class="form-row"><label>數量</label><input type="number" id="editKybTxnQty" min="1" value="${t.qty}"></div>
     <div class="form-row"><label>儲位</label>
@@ -204,12 +204,12 @@ async function saveEditKybTxn(t, next){
     const allLocs = {...(item.locations||{})};
 
     // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
-    const oldSign = t.type === "in" ? -1 : 1;
+    const oldSign = -txnSign(t);
     const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
     if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
 
     // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
-    const newSign = t.type === "in" ? 1 : -1;
+    const newSign = txnSign(t);
     const curAtNewLoc = kybLocQty(allLocs[next.loc]);
     const resultQty = curAtNewLoc + next.qty*newSign;
     if(t.type === "out" && resultQty < 0){
@@ -241,7 +241,7 @@ async function deleteKybTxn(txnId){
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
-    const sign = t.type === "in" ? -1 : 1;
+    const sign = -txnSign(t);
     const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
     if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
     await itemRef.update({locations: allLocs});

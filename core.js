@@ -141,6 +141,39 @@ function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
 }
 
+// ---- 進銷貨/校正 共用邏輯：type 可能是 "in"（進貨）、"out"（銷貨）、"adjust"（庫存校正）----
+// txnSign：這筆紀錄「套用」時對庫存的正負號；還原時取相反數 (-txnSign(t))。
+function txnSign(t){
+  if(t.type === "adjust") return t.adjustSign === "-" ? -1 : 1;
+  return t.type === "in" ? 1 : -1;
+}
+function txnTypeLabel(t){
+  if(t.type === "adjust") return t.adjustSign === "-" ? "庫存校正（調降）" : "庫存校正（調升）";
+  return t.type === "in" ? "進貨" : "銷貨";
+}
+
+// ---- 金額／稅別共用計算：taxMode 為 "included"（稅內含）、"excluded"（稅外加）、"none"（不計稅）----
+// 稅率固定 5%，所有金額四捨五入到整數。
+function calcAmounts(qty, unitPrice, taxMode){
+  const q = Number(qty) || 0;
+  const p = Number(unitPrice) || 0;
+  if(taxMode === "excluded"){
+    const subtotal = Math.round(q * p);
+    const taxAmount = Math.round(subtotal * 0.05);
+    return { subtotal, taxAmount, total: subtotal + taxAmount };
+  }
+  if(taxMode === "included"){
+    const total = Math.round(q * p);
+    const taxAmount = Math.round(total - total / 1.05);
+    return { subtotal: total - taxAmount, taxAmount, total };
+  }
+  const total = Math.round(q * p);
+  return { subtotal: total, taxAmount: 0, total };
+}
+function taxModeLabel(m){
+  return { included: "稅內含", excluded: "稅外加", none: "不計稅" }[m] || "-";
+}
+
 document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPassword").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 

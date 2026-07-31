@@ -38,7 +38,7 @@ function renderTxns(){
     const label = item ? `${item.brand} ${item.spec}` : "(品項已刪除)";
     return `<tr>
       <td>${escapeHtml(t.date)}</td>
-      <td>${t.type==='in'?'進貨':'銷貨'}</td>
+      <td>${txnTypeLabel(t)}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
@@ -202,7 +202,7 @@ function openEditTxnModal(txnId){
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>品項</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
-    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${txnTypeLabel(t)}" disabled></div>
     <div class="form-row"><label>日期</label><input type="date" id="editTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
     <div class="form-row"><label>數量</label><input type="number" id="editTxnQty" min="1" value="${t.qty}"></div>
     <div class="form-row"><label>儲位</label>
@@ -246,7 +246,7 @@ async function saveEditTxn(t, next){
     let oldBatches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
     let oldIdx = oldBatches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null));
     if(oldIdx < 0){ oldBatches.push({ qty: 0, productionDate: t.batchDate||null }); oldIdx = oldBatches.length-1; }
-    const oldSign = t.type === "in" ? -1 : 1;
+    const oldSign = -txnSign(t);
     oldBatches[oldIdx].qty = (oldBatches[oldIdx].qty||0) + t.qty*oldSign;
     if(oldBatches[oldIdx].qty <= 0) oldBatches.splice(oldIdx, 1);
     allLocs[t.loc] = oldBatches.filter(b=>b.qty>0);
@@ -260,7 +260,7 @@ async function saveEditTxn(t, next){
       newBatches.push({ qty: 0, productionDate: next.batchDate||null });
       newIdx = newBatches.length-1;
     }
-    const newSign = t.type === "in" ? 1 : -1;
+    const newSign = txnSign(t);
     const resultQty = (newBatches[newIdx].qty||0) + next.qty*newSign;
     if(t.type === "out" && resultQty < 0){
       throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成銷貨 ${next.qty} 條`);
@@ -298,7 +298,7 @@ async function deleteTxn(txnId){
     let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
     if(idx < 0) idx = 0;
     if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
-    const sign = t.type === "in" ? -1 : 1;
+    const sign = -txnSign(t);
     batches[idx].qty = (batches[idx].qty||0) + t.qty*sign;
     if(batches[idx].qty <= 0) batches.splice(idx, 1);
     allLocs[t.loc] = batches.filter(b=>b.qty>0);
