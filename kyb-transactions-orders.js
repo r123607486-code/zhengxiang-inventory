@@ -61,7 +61,7 @@ function openKybTxnModal(){
       <select id="kybTxnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
     </div>
     <div class="form-row">
-      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桐／藍桐）</label>
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
       <input type="text" id="kybTxnItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="kybTxnItemList"></div>
     </div>
@@ -75,6 +75,7 @@ function openKybTxnModal(){
     </div>
     <div class="form-row"><label id="kybTxnPriceLabel">單價</label><input type="number" id="kybTxnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入"></div>
     <div class="count" id="kybTxnPricePreview" style="color:#2451a3;"></div>
+    <div class="form-row"><label>業務</label><input type="text" id="kybTxnSalesperson" placeholder="銷貨時會自動帶入登入者姓名，可自行修改"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="kybTxnSubmitBtn">確認送出</button>
@@ -86,6 +87,10 @@ function openKybTxnModal(){
     const type = document.getElementById("kybTxnType").value;
     const locSelect = document.getElementById("kybTxnLoc");
     const it = kybItemsCache.find(i=>i.id===selectedItemId);
+    if(type === "out"){
+      const spEl = document.getElementById("kybTxnSalesperson");
+      if(spEl && !spEl.value.trim()) spEl.value = currentUser.name;
+    }
     if(!it){ locSelect.innerHTML = `<option value="">請先選擇車型</option>`; return; }
     if(type === "out"){
       const options = kybLocList(it);
@@ -126,6 +131,7 @@ function openKybTxnModal(){
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
     const priceInput = Number(document.getElementById("kybTxnPrice").value) || 0;
     const taxMode = document.getElementById("kybTxnTaxMode").value;
+    const salesperson = document.getElementById("kybTxnSalesperson").value.trim();
 
     let loc;
     if(type === "out"){
@@ -139,7 +145,7 @@ function openKybTxnModal(){
       if(!loc){ alert("請選擇儲位"); return; }
     }
     try{
-      await submitKybTxn(selectedItemId, type, qty, loc, priceInput, taxMode);
+      await submitKybTxn(selectedItemId, type, qty, loc, priceInput, taxMode, salesperson);
     }catch(e){
       console.error("KYB 進銷貨送出失敗：", e);
       alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
@@ -147,7 +153,7 @@ function openKybTxnModal(){
   });
 }
 
-async function submitKybTxn(itemId, type, qty, loc, priceInput, taxMode){
+async function submitKybTxn(itemId, type, qty, loc, priceInput, taxMode, salesperson){
   const itemRef = db.collection("kybItems").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -161,6 +167,7 @@ async function submitKybTxn(itemId, type, qty, loc, priceInput, taxMode){
   await db.collection("kybTransactions").add({
     itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: [],
     createdAt: new Date().toISOString(),
+    salesperson: salesperson || "",
     unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
     subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
   });
@@ -395,7 +402,7 @@ async function deleteKybTxn(txnId){
 }
 
 function openNewKybItemModal(){
-  const bucketOptions = ["白桐","藍桐","深藍桐"];
+  const bucketOptions = ["白桶","藍桶","深藍桶"];
   const html = `
     <div class="sheet-head"><h2>新增車型</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" id="newKybModel" placeholder="例如 Altis '19~"></div>
@@ -647,20 +654,42 @@ function cancelKybOrder(orderId){
   }).catch(e=>alert("取消失敗："+e.message));
 }
 
+// 我的訂單：除了自己叫貨的 KYB 訂單之外，也合併顯示自己名下直接在進銷貨管理新增的銷貨紀錄（非叫貨流程）。
 function renderKybMyOrders(){
   const body = document.getElementById("kybMyOrdersBody");
   if(!body) return;
-  const sorted = kybMyOrdersCache.slice().sort((a,b)=> (b.requestedAt||"").localeCompare(a.requestedAt||""));
-  document.getElementById("kybMyOrdersCount").textContent = `共 ${sorted.length} 筆`;
-  const statusLabel = { pending:"待確認", confirmed:"已出貨", cancelled:"已取消" };
-  body.innerHTML = sorted.map(o=>`<tr>
-    <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
+  const orderRows = kybMyOrdersCache.map(o=>({
+    time: o.requestedAt || "",
+    itemLabel: o.itemLabel || "",
+    qty: o.qty,
+    unitPrice: o.unitPrice,
+    total: o.total,
+    customerName: o.customerName || "",
+    statusText: ({ pending:"待確認", confirmed:"已出貨", cancelled:"已取消" })[o.status] || o.status
+  }));
+  const salesRows = (kybMySalesTxnCache||[]).map(t=>{
+    const item = kybItemsCache.find(i=>i.id===t.itemId);
+    const label = item ? item.carModel : "(車型已刪除)";
+    return {
+      time: t.createdAt || t.date || "",
+      itemLabel: label,
+      qty: t.qty,
+      unitPrice: t.unitPrice,
+      total: t.total,
+      customerName: t.customerName || "",
+      statusText: t.type === "in" ? "進貨紀錄" : "銷貨紀錄"
+    };
+  });
+  const merged = orderRows.concat(salesRows).sort((a,b)=> (b.time||"").localeCompare(a.time||""));
+  document.getElementById("kybMyOrdersCount").textContent = `共 ${merged.length} 筆`;
+  body.innerHTML = merged.map(o=>`<tr>
+    <td>${escapeHtml((o.time||"").slice(0,16).replace("T"," "))}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
     <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
     <td>${o.total!=null?o.total:"-"}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
-    <td>${statusLabel[o.status]||o.status}</td>
+    <td>${escapeHtml(o.statusText||"")}</td>
   </tr>`).join("") || `<tr><td colspan="7" class="empty">尚無訂單紀錄</td></tr>`;
 }
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>正享有限公司庫存管理系統</title>
-<link rel="stylesheet" href="style.css?v=20260801f">
+<link rel="stylesheet" href="style.css?v=20260801g">
 </head>
 <body>
 
@@ -54,7 +54,7 @@
 
   <main>
     <div class="banner hidden" id="backupBanner">
-      <span>今天是星期五，記得匯出本週資料備份喀。</span>
+      <span>今天是星期五，記得匯出本週資料備份嗔。</span>
       <button id="dismissBanner">知道了</button>
     </div>
     <div class="banner hidden" id="ordersBanner">
@@ -141,14 +141,14 @@
       </div>
     </section>
 
-    <!-- 我的訂單（員工：查看自己叫貨的狀態與紀錄） -->
+    <!-- 我的訂單（員工：查看自己叫貨的狀態與紀錄、以及自己的進銷貨紀錄） -->
     <section class="page" id="page-myorders">
       <div class="page-head">
         <div class="count" id="myOrdersCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
+          <thead><tr><th>時間</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
           <tbody id="myOrdersBody"></tbody>
         </table>
       </div>
@@ -197,7 +197,7 @@
       </div>
     </section>
 
-    <!-- ===================== KYB 避震器模組（独立品項，不與輪胎混用） ===================== -->
+    <!-- ===================== KYB 避震器模組（獨立品項，不與輪胎混用） ===================== -->
 
     <!-- KYB 庫存查詢 -->
     <section class="page" id="page-kyb-query">
@@ -273,7 +273,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
+          <thead><tr><th>時間</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
           <tbody id="kybMyOrdersBody"></tbody>
         </table>
       </div>
@@ -295,7 +295,7 @@
       </div>
     </section>
 
-    <!-- KYB 資料匯入（独立於輪胎的資料匯入，避免誤刪對方的資料） -->
+    <!-- KYB 資料匯入（獨立於輪胎的資料匯入，避免誤刪對方的資料） -->
     <section class="page" id="page-kyb-import">
       <div class="toolbar">
         <button id="kybClearDataBtn">清除所有KYB車型與儲位資料</button>
@@ -304,7 +304,7 @@
         <input type="file" id="kybImportFile" accept=".xlsx">
         <button class="primary" id="kybImportBtn">開始匯入</button>
       </div>
-      <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桐／藍桐／深藍桐會依「車型＋避震款式」分別比對，不會互相覆蒙。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桐匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
+      <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桶／藍桶／深藍桶會依「車型＋避震款式」分別比對，不會互相覆蓋。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桶匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
     </section>
   </main>
 </div>
@@ -321,16 +321,16 @@
 <!-- SheetJS：用來匯出 Excel，免費、純前端 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-<script src="firebase-config.js?v=20260801f"></script>
-<script src="core.js?v=20260801f"></script>
-<script src="modal-shared.js?v=20260801f"></script>
-<script src="tire-inventory.js?v=20260801f"></script>
-<script src="tire-transactions-orders.js?v=20260801f"></script>
-<script src="locations-users.js?v=20260801f"></script>
-<script src="data-import.js?v=20260801f"></script>
-<script src="backup-restore.js?v=20260801f"></script>
-<script src="handover-backup.js?v=20260801f"></script>
-<script src="kyb-inventory.js?v=20260801f"></script>
-<script src="kyb-transactions-orders.js?v=20260801f"></script>
+<script src="firebase-config.js?v=20260801g"></script>
+<script src="core.js?v=20260801g"></script>
+<script src="modal-shared.js?v=20260801g"></script>
+<script src="tire-inventory.js?v=20260801g"></script>
+<script src="tire-transactions-orders.js?v=20260801g"></script>
+<script src="locations-users.js?v=20260801g"></script>
+<script src="data-import.js?v=20260801g"></script>
+<script src="backup-restore.js?v=20260801g"></script>
+<script src="handover-backup.js?v=20260801g"></script>
+<script src="kyb-inventory.js?v=20260801g"></script>
+<script src="kyb-transactions-orders.js?v=20260801g"></script>
 </body>
 </html>
