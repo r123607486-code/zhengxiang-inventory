@@ -232,6 +232,7 @@
       <div class="page-head">
         <div class="toolbar">
           <button class="primary" id="kybNewTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="kybNewAdjustBtn">+ 庫存校正</button>
           <button id="kybNewItemBtn">+ 新增車型</button>
         </div>
         <div class="toolbar">
@@ -246,7 +247,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>日期</th><th>類型</th><th>車型</th><th>數量</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
+          <thead><tr><th>日期</th><th>類型</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
           <tbody id="kybTxnBody"></tbody>
         </table>
       </div>
@@ -259,7 +260,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
           <tbody id="kybOrdersBody"></tbody>
         </table>
       </div>
@@ -272,7 +273,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>車型</th><th>數量</th><th>客戶</th><th>狀態</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>客戶</th><th>狀態</th></tr></thead>
           <tbody id="kybMyOrdersBody"></tbody>
         </table>
       </div>
@@ -320,16 +321,16 @@
 <!-- SheetJS：用來匯出 Excel，免費、純前端 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-<script src="firebase-config.js?v=20260801"></script>
-<script src="core.js?v=20260801"></script>
-<script src="modal-shared.js?v=20260801"></script>
-<script src="tire-inventory.js?v=20260801"></script>
-<script src="tire-transactions-orders.js?v=20260801"></script>
-<script src="locations-users.js?v=20260801"></script>
-<script src="data-import.js?v=20260801"></script>
-<script src="backup-restore.js?v=20260801"></script>
-<script src="handover-backup.js?v=20260801"></script>
-<script src="kyb-inventory.js?v=20260801"></script>
-<script src="kyb-transactions-orders.js?v=20260801"></script>
+<script src="firebase-config.js?v=20260801c"></script>
+<script src="core.js?v=20260801c"></script>
+<script src="modal-shared.js?v=20260801c"></script>
+<script src="tire-inventory.js?v=20260801c"></script>
+<script src="tire-transactions-orders.js?v=20260801c"></script>
+<script src="locations-users.js?v=20260801c"></script>
+<script src="data-import.js?v=20260801c"></script>
+<script src="backup-restore.js?v=20260801c"></script>
+<script src="handover-backup.js?v=20260801c"></script>
+<script src="kyb-inventory.js?v=20260801c"></script>
+<script src="kyb-transactions-orders.js?v=20260801c"></script>
 </body>
 </html>
