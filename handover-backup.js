@@ -1,4 +1,8 @@
 // 完整交接備份：保留所有業務資料的原始欄位與文件 ID。
+document.getElementById("exportAllBtn").addEventListener("click", ()=>{
+  exportFullBackup();
+});
+
 const HANDOVER_SHEETS = [
   ["brands","交接_品牌","品牌"], ["items","交接_輪胎品項","輪胎品項"], ["locations","交接_輪胎儲位","輪胎儲位"],
   ["transactions","交接_輪胎進出貨","輪胎進出貨"], ["orders","交接_輪胎訂單","輪胎訂單"],
