@@ -34,11 +34,13 @@ let txnCache = [];
 let brandsCache = [];
 let ordersCache = [];
 let myOrdersCache = [];
+let mySalesTxnCache = [];
 
 let kybItemsCache = [];
 let kybLocationsCache = [];
 let kybOrdersCache = [];
 let kybMyOrdersCache = [];
+let kybMySalesTxnCache = [];
 let kybTxnCache = [];
 let usersListenerStarted = false;
 let tireListenersStarted = false;
@@ -428,6 +430,12 @@ function startTireListeners(){
       myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
       refreshMyOrders();
     });
+    // 這个把「自己名下的進銷貨紀錄」也拉進來（不管是叫貨核准產生的，還是自己直接在進銷貨管理新增的），
+    // 排除有 orderId 的（那些已經由上面的訂單列表代表，避免在「我的訂單」重複顯示兩次。
+    db.collection("transactions").where("salesperson","==",currentUser.name).onSnapshot(snap=>{
+      mySalesTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(t=> !t.orderId);
+      renderMyOrders();
+    });
   }
   db.collection("brands").onSnapshot(snap=>{
     brandsCache = snap.docs.map(d=>d.data().name);
@@ -468,6 +476,11 @@ function startKybListeners(){
     db.collection("kybOrders").where("requestedByName","==",currentUser.name).onSnapshot(snap=>{
       myKybOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
       refreshMyKybOrders();
+    });
+    // 同輪胎一樣，把自己名下的KYB進銷貨紀錄也拉進「我的訂單」，排除已經連結訂單的（避免重複）。
+    db.collection("kybTransactions").where("salesperson","==",currentUser.name).onSnapshot(snap=>{
+      kybMySalesTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(t=> !t.orderId);
+      renderKybMyOrders();
     });
   }
 }
