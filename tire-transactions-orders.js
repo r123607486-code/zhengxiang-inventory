@@ -1,7 +1,8 @@
 // ============================================================
-// 輪胎：進銷貨管理 / 訂單管理 / 我的訂單
+// 輪胎：進銷貨管理 / 庫存校正 / 訂單管理 / 我的訂單
 // ============================================================
 document.getElementById("newTxnBtn").addEventListener("click", openTxnModal);
+document.getElementById("newAdjustBtn").addEventListener("click", openAdjustTxnModal);
 document.getElementById("newItemBtn").addEventListener("click", openNewItemModal);
 
 document.getElementById("txnFilterFrom").addEventListener("change", renderTxns);
@@ -41,12 +42,14 @@ function renderTxns(){
       <td>${txnTypeLabel(t)}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
+      <td>${t.unitPrice!=null?t.unitPrice:"-"}</td>
+      <td>${t.total!=null?t.total:"-"}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
       <td>${escapeHtml(t.customerName||"")}</td>
       <td>${escapeHtml(t.operator||"")}</td>
       <td><button data-edit="${t.id}">編輯</button> <button data-del="${t.id}">刪除</button></td>
     </tr>`;
-  }).join("") || `<tr><td colspan="8" class="empty">尚無紀錄</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="empty">尚無紀錄</td></tr>`;
 
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openEditTxnModal(b.dataset.edit)));
   body.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", ()=>deleteTxn(b.dataset.del)));
@@ -69,6 +72,10 @@ function openTxnModal(){
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
     <div class="form-row" id="txnProdDateRow"><label>生產日期（選填，這批的4碼DOT代碼，例如2523；只有進貨才需要）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
+    <div class="form-row"><label>單價（選填，一律自行輸入，不會自動帶入品項售價）</label><input type="number" id="txnUnitPrice" min="0" step="1"></div>
+    <div class="form-row"><label>交易方式</label>
+      <select id="txnTaxMode"><option value="none">不計稅</option><option value="included">稅內含</option><option value="excluded">稅外加</option></select>
+    </div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -126,6 +133,8 @@ function openTxnModal(){
     const type = document.getElementById("txnType").value;
     const qty = Number(document.getElementById("txnQty").value);
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const unitPrice = Number(document.getElementById("txnUnitPrice").value) || 0;
+    const taxMode = document.getElementById("txnTaxMode").value;
 
     let loc, batchDate;
     if(type === "out"){
@@ -140,7 +149,7 @@ function openTxnModal(){
       batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
     try{
-      await submitTxn(selectedItemId, type, qty, loc, batchDate);
+      await submitTxn(selectedItemId, type, qty, loc, batchDate, unitPrice, taxMode);
     }catch(e){
       console.error("輪胎進銷貨送出失敗：", e);
       alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
@@ -148,7 +157,7 @@ function openTxnModal(){
   });
 }
 
-async function submitTxn(itemId, type, qty, loc, batchDate){
+async function submitTxn(itemId, type, qty, loc, batchDate, unitPrice, taxMode){
   const itemRef = db.collection("items").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -182,16 +191,169 @@ async function submitTxn(itemId, type, qty, loc, batchDate){
   allLocs[loc] = batches.filter(b=>b.qty>0);
   if(allLocs[loc].length === 0) delete allLocs[loc];
 
+  const amounts = calcAmounts(qty, unitPrice, taxMode);
   await itemRef.update({locations: allLocs});
   await db.collection("transactions").add({
     itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: [],
+    createdAt: new Date().toISOString(),
+    unitPrice: Number(unitPrice)||0, taxMode: taxMode||"none",
+    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
+  });
+  await refreshTireViews();
+  closeModal();
+}
+
+// 庫存校正：用於盤點差異、破損報庳、輸入錯誤等情形下直接調整庫存，
+// 與進貨／銷貨屬於不同的紀錄類型（type="adjust"），不會被算入銷貨業績。
+function openAdjustTxnModal(){
+  const html = `
+    <div class="sheet-head"><h2>庫存校正</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>方向</label>
+      <select id="adjustSign"><option value="+">調正（增加庫存）</option><option value="-">調負（減少庫存）</option></select>
+    </div>
+    <div class="form-row">
+      <label>搜尋品項（輸入規格或型號）</label>
+      <input type="text" id="adjustItemSearch" placeholder="例如 205/60">
+      <div class="autocomplete-list hidden" id="adjustItemList"></div>
+    </div>
+    <div class="form-row"><label>已選品項</label><input type="text" id="adjustItemLabel" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="adjustQty" min="1"></div>
+    <div class="form-row"><label>儲位</label>
+      <select id="adjustLoc"><option value="">請先選擇品項</option></select>
+    </div>
+    <div class="form-row" id="adjustProdDateRow"><label>生產日期（選填，調正時可填這批的4碼DOT代碼）</label><input type="text" id="adjustProdDate" placeholder="例如 2523"></div>
+    <div class="form-row"><label>校正原因</label>
+      <select id="adjustReason">
+        <option value="盤點差異">盤點差異</option>
+        <option value="破損報庳">破損報庳</option>
+        <option value="輸入錯誤">輸入錯誤</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="adjustSubmitBtn">確認送出</button>
+    </div>`;
+  openModal(html);
+  let selectedItemId = null;
+
+  function refreshLocOptions(){
+    const sign = document.getElementById("adjustSign").value;
+    const locSelect = document.getElementById("adjustLoc");
+    const it = itemsCache.find(i=>i.id===selectedItemId);
+    const prodDateRow = document.getElementById("adjustProdDateRow");
+    if(sign === "-"){
+      prodDateRow.classList.add("hidden");
+      document.getElementById("adjustProdDate").value = "";
+    } else {
+      prodDateRow.classList.remove("hidden");
+    }
+    if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; window._adjustOutOptions = []; return; }
+    if(sign === "-"){
+      const options = locDetailList(it);
+      window._adjustOutOptions = options;
+      if(options.length === 0){
+        locSelect.innerHTML = `<option value="">這個品項目前沒有庫存可以調負</option>`;
+      } else {
+        locSelect.innerHTML = options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("");
+      }
+    } else {
+      window._adjustOutOptions = [];
+      locSelect.innerHTML = locationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
+    }
+  }
+  document.getElementById("adjustSign").addEventListener("change", refreshLocOptions);
+
+  const searchInput = document.getElementById("adjustItemSearch");
+  searchInput.addEventListener("input", ()=>{
+    const q = norm(searchInput.value);
+    const listEl = document.getElementById("adjustItemList");
+    if(!q){ listEl.classList.add("hidden"); return; }
+    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
+    listEl.classList.toggle("hidden", matches.length===0);
+    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
+      selectedItemId = d.dataset.id;
+      const it = itemsCache.find(i=>i.id===selectedItemId);
+      document.getElementById("adjustItemLabel").value = `${it.brand} ${it.spec}（${it.model||""}）`;
+      listEl.classList.add("hidden");
+      searchInput.value = "";
+      refreshLocOptions();
+    }));
+  });
+
+  document.getElementById("adjustSubmitBtn").addEventListener("click", async ()=>{
+    if(!selectedItemId){ alert("請先搜尋並選擇一個品項"); return; }
+    const sign = document.getElementById("adjustSign").value;
+    const qty = Number(document.getElementById("adjustQty").value);
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const reason = document.getElementById("adjustReason").value;
+
+    let loc, batchDate;
+    if(sign === "-"){
+      const idx = Number(document.getElementById("adjustLoc").value);
+      const opt = (window._adjustOutOptions||[])[idx];
+      if(!opt){ alert("請選擇要調負的儲位（如果同一個儲位有多批不同生產日期，請選對批次）"); return; }
+      loc = opt.code; batchDate = opt.date;
+      if(qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不能調負 ${qty} 條`); return; }
+    } else {
+      loc = document.getElementById("adjustLoc").value;
+      if(!loc){ alert("請選擇儲位"); return; }
+      batchDate = document.getElementById("adjustProdDate").value.trim() || null;
+    }
+    try{
+      await submitAdjustTxn(selectedItemId, sign, qty, loc, batchDate, reason);
+    }catch(e){
+      console.error("輪胎庫存校正送出失敗：", e);
+      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
+    }
+  });
+}
+
+async function submitAdjustTxn(itemId, adjustSign, qty, loc, batchDate, reason){
+  const itemRef = db.collection("items").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+  let usedDate = null;
+
+  if(adjustSign === "+"){
+    const enteredDate = (batchDate||"").toString().trim() || null;
+    if(enteredDate){
+      const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
+      usedDate = enteredDate;
+    } else if(batches.length === 1){
+      batches[0].qty += qty;
+      usedDate = batches[0].productionDate || null;
+    } else {
+      const idx = batches.findIndex(b=> !b.productionDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
+      usedDate = null;
+    }
+  } else {
+    const targetDate = batchDate || null;
+    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+    if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
+    batches[idx].qty -= qty;
+    if(batches[idx].qty <= 0) batches.splice(idx, 1);
+    usedDate = targetDate;
+  }
+
+  allLocs[loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[loc].length === 0) delete allLocs[loc];
+
+  await itemRef.update({locations: allLocs});
+  await db.collection("transactions").add({
+    itemId, type: "adjust", adjustSign, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, reason, editLog: [],
     createdAt: new Date().toISOString()
   });
   await refreshTireViews();
   closeModal();
 }
 
-// 編輯進銷貨紀錄：日期、數量、儲位、業務、客戶姓名都可以改。
+// 編輯進銷貨／校正紀錄：日期、數量、儲位、業務、客戶姓名、單價、交易方式都可以改，類型不能改。
 // 儲位一定要從現有儲位清單選（不能自己打字），生產日期批次維持原本可填可留空的方式。
 // 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
 function openEditTxnModal(txnId){
@@ -209,6 +371,14 @@ function openEditTxnModal(txnId){
       <select id="editTxnLoc">${locationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
     </div>
     <div class="form-row"><label>生產日期（這批的4碼DOT代碼，留空表示不指定批次）</label><input type="text" id="editTxnBatchDate" value="${escapeHtml(t.batchDate||"")}" placeholder="例如 2523"></div>
+    <div class="form-row"><label>單價（進貨／銷貨才需要，校正紀錄可留 0）</label><input type="number" id="editTxnUnitPrice" min="0" step="1" value="${t.unitPrice!=null?t.unitPrice:0}"></div>
+    <div class="form-row"><label>交易方式</label>
+      <select id="editTxnTaxMode">
+        <option value="none" ${(!t.taxMode||t.taxMode==='none')?'selected':''}>不計稅</option>
+        <option value="included" ${t.taxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${t.taxMode==='excluded'?'selected':''}>稅外加</option>
+      </select>
+    </div>
     <div class="form-row"><label>業務</label><input type="text" id="editTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
@@ -222,12 +392,14 @@ function openEditTxnModal(txnId){
     const newQty = Number(document.getElementById("editTxnQty").value);
     const newLoc = document.getElementById("editTxnLoc").value;
     const newBatchDate = document.getElementById("editTxnBatchDate").value.trim() || null;
+    const newUnitPrice = Number(document.getElementById("editTxnUnitPrice").value) || 0;
+    const newTaxMode = document.getElementById("editTxnTaxMode").value;
     const newSalesperson = document.getElementById("editTxnSalesperson").value.trim();
     const newCustomerName = document.getElementById("editTxnCustomerName").value.trim();
     if(!newQty || newQty<=0){ alert("請輸入正確的數量"); return; }
     if(!newLoc){ alert("請選擇儲位"); return; }
     try{
-      await saveEditTxn(t, { date:newDate, qty:newQty, loc:newLoc, batchDate:newBatchDate, salesperson:newSalesperson, customerName:newCustomerName });
+      await saveEditTxn(t, { date:newDate, qty:newQty, loc:newLoc, batchDate:newBatchDate, unitPrice:newUnitPrice, taxMode:newTaxMode, salesperson:newSalesperson, customerName:newCustomerName });
       closeModal();
     }catch(e){
       alert("儲存失敗："+e.message);
@@ -242,7 +414,7 @@ async function saveEditTxn(t, next){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（正號方向要扣掉、負號方向要加回去）
     let oldBatches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
     let oldIdx = oldBatches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null));
     if(oldIdx < 0){ oldBatches.push({ qty: 0, productionDate: t.batchDate||null }); oldIdx = oldBatches.length-1; }
@@ -252,18 +424,18 @@ async function saveEditTxn(t, next){
     allLocs[t.loc] = oldBatches.filter(b=>b.qty>0);
     if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
 
-    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
+    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位／日期）
     let newBatches = normalizeBatches(allLocs[next.loc], item).map(b=>({...b}));
     let newIdx = newBatches.findIndex(b=> (b.productionDate||null) === (next.batchDate||null));
     if(newIdx < 0){
-      if(t.type === "out"){ throw new Error("這個儲位／批次目前沒有庫存，無法把銷貨紀錄改到這裡，請確認儲位或生產日期"); }
+      if(txnSign(t) < 0){ throw new Error("這個儲位／批次目前沒有庫存，無法把這筆紀錄改到這裡，請確認儲位或生產日期"); }
       newBatches.push({ qty: 0, productionDate: next.batchDate||null });
       newIdx = newBatches.length-1;
     }
     const newSign = txnSign(t);
     const resultQty = (newBatches[newIdx].qty||0) + next.qty*newSign;
-    if(t.type === "out" && resultQty < 0){
-      throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成銷貨 ${next.qty} 條`);
+    if(newSign < 0 && resultQty < 0){
+      throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成 ${next.qty} 條`);
     }
     newBatches[newIdx].qty = resultQty;
     if(newBatches[newIdx].qty <= 0) newBatches.splice(newIdx, 1);
@@ -273,12 +445,15 @@ async function saveEditTxn(t, next){
     await itemRef.update({ locations: allLocs });
   }
 
+  const amounts = calcAmounts(next.qty, next.unitPrice, next.taxMode);
   await db.collection("transactions").doc(t.id).update({
     date: next.date, qty: next.qty, loc: next.loc, batchDate: next.batchDate,
     salesperson: next.salesperson, customerName: next.customerName,
+    unitPrice: Number(next.unitPrice)||0, taxMode: next.taxMode||"none",
+    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
     editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, batchDate:t.batchDate||null, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-      after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName },
+      before: { date:t.date||null, qty:t.qty, loc:t.loc, batchDate:t.batchDate||null, salesperson:t.salesperson||"", customerName:t.customerName||"", unitPrice:t.unitPrice||0, taxMode:t.taxMode||"none", total:t.total||0 },
+      after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName, unitPrice:next.unitPrice, taxMode:next.taxMode, total:amounts.total },
       time: new Date().toISOString(), by: currentUser.name
     })
   });
@@ -361,6 +536,8 @@ function renderOrders(){
     <td>${escapeHtml(o.requestedByName||"")}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
+    <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
+    <td>${o.total!=null?o.total:"-"}</td>
     <td>${o.loc?`${escapeHtml(o.loc)}${o.batchDate?`（${escapeHtml(o.batchDate)}）`:''}`:'<span class="empty-inline">未選</span>'}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
     <td>${escapeHtml(o.customerContact||"")}</td>
@@ -370,7 +547,7 @@ function renderOrders(){
       <button data-edit="${o.id}">修改</button>
       <button data-cancel="${o.id}">取消</button>
     </td>
-  </tr>`).join("") || `<tr><td colspan="9" class="empty">目前沒有待確認訂單</td></tr>`;
+  </tr>`).join("") || `<tr><td colspan="11" class="empty">目前沒有待確認訂單</td></tr>`;
 
   body.querySelectorAll("[data-confirm]").forEach(b=>b.addEventListener("click", ()=> openConfirmOrderModal(b.dataset.confirm)));
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=> openEditOrderModal(b.dataset.edit)));
@@ -398,6 +575,14 @@ function openConfirmOrderModal(orderId){
     <div class="form-row"><label>選擇要出貨的儲位／批次</label>
       <select id="confirmLoc">${options.map((o,i)=>`<option value="${i}" ${i===defaultIdx?'selected':''}>${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("")}</select>
     </div>
+    <div class="form-row"><label>單價（員工原回報值，可以改）</label><input type="number" id="confirmUnitPrice" min="0" step="1" value="${order.unitPrice!=null?order.unitPrice:0}"></div>
+    <div class="form-row"><label>交易方式</label>
+      <select id="confirmTaxMode">
+        <option value="none" ${(!order.taxMode||order.taxMode==='none')?'selected':''}>不計稅</option>
+        <option value="included" ${order.taxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${order.taxMode==='excluded'?'selected':''}>稅外加</option>
+      </select>
+    </div>
     <div class="count" id="confirmStockWarn" style="color:#a31e22;"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
@@ -417,10 +602,12 @@ function openConfirmOrderModal(orderId){
   document.getElementById("confirmOrderSubmitBtn").addEventListener("click", async ()=>{
     const idx = Number(document.getElementById("confirmLoc").value);
     const opt = options[idx];
+    const unitPrice = Number(document.getElementById("confirmUnitPrice").value) || 0;
+    const taxMode = document.getElementById("confirmTaxMode").value;
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不夠出 ${order.qty} 條，請選別批，或先用「修改」調整這筆訂單的數量`); return; }
     try{
-      const txnRef = await submitOrderTxn(order, opt.code, opt.date);
+      const txnRef = await submitOrderTxn(order, opt.code, opt.date, unitPrice, taxMode);
       await db.collection("orders").doc(order.id).update({
         status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
       });
@@ -431,7 +618,7 @@ function openConfirmOrderModal(orderId){
   });
 }
 
-async function submitOrderTxn(order, loc, batchDate){
+async function submitOrderTxn(order, loc, batchDate, unitPrice, taxMode){
   const itemRef = db.collection("items").doc(order.itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -445,6 +632,7 @@ async function submitOrderTxn(order, loc, batchDate){
   if(batches[idx].qty <= 0) batches.splice(idx, 1);
   allLocs[loc] = batches.filter(b=>b.qty>0);
   if(allLocs[loc].length === 0) delete allLocs[loc];
+  const amounts = calcAmounts(order.qty, unitPrice, taxMode);
   await itemRef.update({locations: allLocs});
   return await db.collection("transactions").add({
     itemId: order.itemId, type: "out", qty: order.qty, loc, batchDate: targetDate,
@@ -452,7 +640,9 @@ async function submitOrderTxn(order, loc, batchDate){
     salesperson: order.requestedByName || "", customerName: order.customerName || "",
     customerContact: order.customerContact || "", customerNote: order.customerNote || "",
     orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    unitPrice: Number(unitPrice)||0, taxMode: taxMode||"none",
+    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
   });
 }
 
@@ -470,6 +660,14 @@ function openEditOrderModal(orderId){
     <div class="form-row"><label>目前品項</label><input type="text" id="editOrderItemLabel" value="${escapeHtml(order.itemLabel||'')}" disabled></div>
     <div class="form-row"><label>選擇儲位／批次</label><select id="editOrderLoc"></select></div>
     <div class="form-row"><label>數量</label><input type="number" id="editOrderQty" min="1" value="${order.qty}"></div>
+    <div class="form-row"><label>單價</label><input type="number" id="editOrderUnitPrice" min="0" step="1" value="${order.unitPrice!=null?order.unitPrice:0}"></div>
+    <div class="form-row"><label>交易方式</label>
+      <select id="editOrderTaxMode">
+        <option value="none" ${(!order.taxMode||order.taxMode==='none')?'selected':''}>不計稅</option>
+        <option value="included" ${order.taxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${order.taxMode==='excluded'?'selected':''}>稅外加</option>
+      </select>
+    </div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editOrderCustomerName" value="${escapeHtml(order.customerName||'')}"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="editOrderCustomerContact" value="${escapeHtml(order.customerContact||'')}"></div>
     <div class="form-row"><label>備註</label><input type="text" id="editOrderCustomerNote" value="${escapeHtml(order.customerNote||'')}"></div>
@@ -511,6 +709,8 @@ function openEditOrderModal(orderId){
 
   document.getElementById("editOrderSaveBtn").addEventListener("click", async ()=>{
     const qty = Number(document.getElementById("editOrderQty").value);
+    const unitPrice = Number(document.getElementById("editOrderUnitPrice").value) || 0;
+    const taxMode = document.getElementById("editOrderTaxMode").value;
     const customerName = document.getElementById("editOrderCustomerName").value.trim();
     const customerContact = document.getElementById("editOrderCustomerContact").value.trim();
     const customerNote = document.getElementById("editOrderCustomerNote").value.trim();
@@ -519,9 +719,11 @@ function openEditOrderModal(orderId){
     const itemLabel = it ? `${it.brand} ${it.spec}（${it.model||""}）` : order.itemLabel;
     const locIdx = Number(document.getElementById("editOrderLoc").value);
     const locOpt = locOptions[locIdx];
+    const amounts = calcAmounts(qty, unitPrice, taxMode);
     try{
       await db.collection("orders").doc(orderId).update({
         itemId: selectedItemId, itemLabel, qty, customerName, customerContact, customerNote,
+        unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
         loc: locOpt ? locOpt.code : null, batchDate: locOpt ? (locOpt.date || null) : null
       });
       closeModal();
@@ -548,7 +750,9 @@ function renderMyOrders(){
     <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
+    <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
+    <td>${o.total!=null?o.total:"-"}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
     <td>${statusLabel[o.status]||o.status}</td>
-  </tr>`).join("") || `<tr><td colspan="5" class="empty">尚無訂單紀錄</td></tr>`;
+  </tr>`).join("") || `<tr><td colspan="7" class="empty">尚無訂單紀錄</td></tr>`;
 }
