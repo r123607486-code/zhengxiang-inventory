@@ -72,10 +72,11 @@ function openTxnModal(){
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
     <div class="form-row" id="txnProdDateRow"><label>生產日期（選填，這批的4碼DOT代碼，例如2523；只有進貨才需要）</label><input type="text" id="txnProdDate" placeholder="例如 2523"></div>
-    <div class="form-row"><label>單價（選填，一律自行輸入，不會自動帶入品項售價）</label><input type="number" id="txnUnitPrice" min="0" step="1"></div>
     <div class="form-row"><label>交易方式</label>
       <select id="txnTaxMode"><option value="none">不計稅</option><option value="included">稅內含</option><option value="excluded">稅外加</option></select>
     </div>
+    <div class="form-row"><label id="txnPriceLabel">單價</label><input type="number" id="txnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入，不會自動帶入品項售價"></div>
+    <div class="count" id="txnPricePreview" style="color:#2451a3;"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="txnSubmitBtn">確認送出</button>
@@ -110,6 +111,7 @@ function openTxnModal(){
   }
 
   document.getElementById("txnType").addEventListener("change", refreshLocOptions);
+  wirePriceCalc({ qty:"txnQty", taxMode:"txnTaxMode", price:"txnPrice", label:"txnPriceLabel", preview:"txnPricePreview" });
 
   const searchInput = document.getElementById("txnItemSearch");
   searchInput.addEventListener("input", ()=>{
@@ -133,7 +135,7 @@ function openTxnModal(){
     const type = document.getElementById("txnType").value;
     const qty = Number(document.getElementById("txnQty").value);
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
-    const unitPrice = Number(document.getElementById("txnUnitPrice").value) || 0;
+    const priceInput = Number(document.getElementById("txnPrice").value) || 0;
     const taxMode = document.getElementById("txnTaxMode").value;
 
     let loc, batchDate;
@@ -149,7 +151,7 @@ function openTxnModal(){
       batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
     try{
-      await submitTxn(selectedItemId, type, qty, loc, batchDate, unitPrice, taxMode);
+      await submitTxn(selectedItemId, type, qty, loc, batchDate, priceInput, taxMode);
     }catch(e){
       console.error("輪胎進銷貨送出失敗：", e);
       alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
@@ -157,7 +159,7 @@ function openTxnModal(){
   });
 }
 
-async function submitTxn(itemId, type, qty, loc, batchDate, unitPrice, taxMode){
+async function submitTxn(itemId, type, qty, loc, batchDate, priceInput, taxMode){
   const itemRef = db.collection("items").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -191,12 +193,12 @@ async function submitTxn(itemId, type, qty, loc, batchDate, unitPrice, taxMode){
   allLocs[loc] = batches.filter(b=>b.qty>0);
   if(allLocs[loc].length === 0) delete allLocs[loc];
 
-  const amounts = calcAmounts(qty, unitPrice, taxMode);
+  const amounts = calcAmounts(qty, priceInput, taxMode);
   await itemRef.update({locations: allLocs});
   await db.collection("transactions").add({
     itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: [],
     createdAt: new Date().toISOString(),
-    unitPrice: Number(unitPrice)||0, taxMode: taxMode||"none",
+    unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
     subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
   });
   await refreshTireViews();
@@ -353,7 +355,7 @@ async function submitAdjustTxn(itemId, adjustSign, qty, loc, batchDate, reason){
   closeModal();
 }
 
-// 編輯進銷貨／校正紀錄：日期、數量、儲位、業務、客戶姓名、單價、交易方式都可以改，類型不能改。
+// 編輯進銷貨／校正紀錄：日期、數量、儲位、業務、客戶姓名、單價／總價、交易方式都可以改，類型不能改。
 // 儲位一定要從現有儲位清單選（不能自己打字），生產日期批次維持原本可填可留空的方式。
 // 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
 function openEditTxnModal(txnId){
@@ -361,6 +363,8 @@ function openEditTxnModal(txnId){
   if(!t) return;
   const item = itemsCache.find(i=>i.id===t.itemId);
   const itemLabel = item ? `${item.brand} ${item.spec}（${item.model||""}）` : "(品項已刪除，仍可編輯其他資訊，但無法改儲位)";
+  const initTaxMode = t.taxMode || "none";
+  const initPrice = initTaxMode === "included" ? (t.total!=null?t.total:0) : (t.unitPrice!=null?t.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>品項</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
@@ -371,14 +375,15 @@ function openEditTxnModal(txnId){
       <select id="editTxnLoc">${locationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
     </div>
     <div class="form-row"><label>生產日期（這批的4碼DOT代碼，留空表示不指定批次）</label><input type="text" id="editTxnBatchDate" value="${escapeHtml(t.batchDate||"")}" placeholder="例如 2523"></div>
-    <div class="form-row"><label>單價（進貨／銷貨才需要，校正紀錄可留 0）</label><input type="number" id="editTxnUnitPrice" min="0" step="1" value="${t.unitPrice!=null?t.unitPrice:0}"></div>
     <div class="form-row"><label>交易方式</label>
       <select id="editTxnTaxMode">
-        <option value="none" ${(!t.taxMode||t.taxMode==='none')?'selected':''}>不計稅</option>
-        <option value="included" ${t.taxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${t.taxMode==='excluded'?'selected':''}>稅外加</option>
+        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
+        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
       </select>
     </div>
+    <div class="form-row"><label id="editTxnPriceLabel">單價</label><input type="number" id="editTxnPrice" min="0" step="0.01" value="${initPrice}"></div>
+    <div class="count" id="editTxnPricePreview" style="color:#2451a3;"></div>
     <div class="form-row"><label>業務</label><input type="text" id="editTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
@@ -386,20 +391,21 @@ function openEditTxnModal(txnId){
       <button class="primary" id="editTxnSaveBtn">儲存</button>
     </div>`;
   openModal(html);
+  wirePriceCalc({ qty:"editTxnQty", taxMode:"editTxnTaxMode", price:"editTxnPrice", label:"editTxnPriceLabel", preview:"editTxnPricePreview" });
 
   document.getElementById("editTxnSaveBtn").addEventListener("click", async ()=>{
     const newDate = document.getElementById("editTxnDate").value || todayStr();
     const newQty = Number(document.getElementById("editTxnQty").value);
     const newLoc = document.getElementById("editTxnLoc").value;
     const newBatchDate = document.getElementById("editTxnBatchDate").value.trim() || null;
-    const newUnitPrice = Number(document.getElementById("editTxnUnitPrice").value) || 0;
+    const newPriceInput = Number(document.getElementById("editTxnPrice").value) || 0;
     const newTaxMode = document.getElementById("editTxnTaxMode").value;
     const newSalesperson = document.getElementById("editTxnSalesperson").value.trim();
     const newCustomerName = document.getElementById("editTxnCustomerName").value.trim();
     if(!newQty || newQty<=0){ alert("請輸入正確的數量"); return; }
     if(!newLoc){ alert("請選擇儲位"); return; }
     try{
-      await saveEditTxn(t, { date:newDate, qty:newQty, loc:newLoc, batchDate:newBatchDate, unitPrice:newUnitPrice, taxMode:newTaxMode, salesperson:newSalesperson, customerName:newCustomerName });
+      await saveEditTxn(t, { date:newDate, qty:newQty, loc:newLoc, batchDate:newBatchDate, priceInput:newPriceInput, taxMode:newTaxMode, salesperson:newSalesperson, customerName:newCustomerName });
       closeModal();
     }catch(e){
       alert("儲存失敗："+e.message);
@@ -445,15 +451,15 @@ async function saveEditTxn(t, next){
     await itemRef.update({ locations: allLocs });
   }
 
-  const amounts = calcAmounts(next.qty, next.unitPrice, next.taxMode);
+  const amounts = calcAmounts(next.qty, next.priceInput, next.taxMode);
   await db.collection("transactions").doc(t.id).update({
     date: next.date, qty: next.qty, loc: next.loc, batchDate: next.batchDate,
     salesperson: next.salesperson, customerName: next.customerName,
-    unitPrice: Number(next.unitPrice)||0, taxMode: next.taxMode||"none",
+    unitPrice: amounts.unitPrice, taxMode: next.taxMode||"none",
     subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
     editLog: firebase.firestore.FieldValue.arrayUnion({
       before: { date:t.date||null, qty:t.qty, loc:t.loc, batchDate:t.batchDate||null, salesperson:t.salesperson||"", customerName:t.customerName||"", unitPrice:t.unitPrice||0, taxMode:t.taxMode||"none", total:t.total||0 },
-      after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName, unitPrice:next.unitPrice, taxMode:next.taxMode, total:amounts.total },
+      after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName, unitPrice:amounts.unitPrice, taxMode:next.taxMode, total:amounts.total },
       time: new Date().toISOString(), by: currentUser.name
     })
   });
@@ -567,28 +573,32 @@ function openConfirmOrderModal(orderId){
   const employeePickNote = order.loc
     ? `<div class="note" style="background:#eef4ff;color:#2451a3;">員工原本選擇：${escapeHtml(order.loc)}${order.batchDate?`（${escapeHtml(order.batchDate)}）`:''}，如需要可在下方改選其他儲位／批次。</div>`
     : "";
+  const initTaxMode = order.taxMode || "none";
+  const initPrice = initTaxMode === "included" ? (order.total!=null?order.total:0) : (order.unitPrice!=null?order.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>確認出貨：${escapeHtml(order.itemLabel||"")}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>客戶</label><input type="text" value="${escapeHtml(order.customerName||'')}（${escapeHtml(order.customerContact||'')}）" disabled></div>
-    <div class="form-row"><label>數量</label><input type="text" value="${order.qty}" disabled></div>
+    <div class="form-row"><label>數量</label><input type="text" id="confirmQty" value="${order.qty}" disabled></div>
     ${employeePickNote}
     <div class="form-row"><label>選擇要出貨的儲位／批次</label>
       <select id="confirmLoc">${options.map((o,i)=>`<option value="${i}" ${i===defaultIdx?'selected':''}>${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("")}</select>
     </div>
-    <div class="form-row"><label>單價（員工原回報值，可以改）</label><input type="number" id="confirmUnitPrice" min="0" step="1" value="${order.unitPrice!=null?order.unitPrice:0}"></div>
     <div class="form-row"><label>交易方式</label>
       <select id="confirmTaxMode">
-        <option value="none" ${(!order.taxMode||order.taxMode==='none')?'selected':''}>不計稅</option>
-        <option value="included" ${order.taxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${order.taxMode==='excluded'?'selected':''}>稅外加</option>
+        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
+        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
       </select>
     </div>
+    <div class="form-row"><label id="confirmPriceLabel">單價（員工原回報值，可以改）</label><input type="number" id="confirmPrice" min="0" step="0.01" value="${initPrice}"></div>
+    <div class="count" id="confirmPricePreview" style="color:#2451a3;"></div>
     <div class="count" id="confirmStockWarn" style="color:#a31e22;"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="confirmOrderSubmitBtn">確認出貨</button>
     </div>`;
   openModal(html);
+  wirePriceCalc({ qty:"confirmQty", taxMode:"confirmTaxMode", price:"confirmPrice", label:"confirmPriceLabel", preview:"confirmPricePreview" });
 
   function refreshWarn(){
     const idx = Number(document.getElementById("confirmLoc").value);
@@ -602,12 +612,12 @@ function openConfirmOrderModal(orderId){
   document.getElementById("confirmOrderSubmitBtn").addEventListener("click", async ()=>{
     const idx = Number(document.getElementById("confirmLoc").value);
     const opt = options[idx];
-    const unitPrice = Number(document.getElementById("confirmUnitPrice").value) || 0;
+    const priceInput = Number(document.getElementById("confirmPrice").value) || 0;
     const taxMode = document.getElementById("confirmTaxMode").value;
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不夠出 ${order.qty} 條，請選別批，或先用「修改」調整這筆訂單的數量`); return; }
     try{
-      const txnRef = await submitOrderTxn(order, opt.code, opt.date, unitPrice, taxMode);
+      const txnRef = await submitOrderTxn(order, opt.code, opt.date, priceInput, taxMode);
       await db.collection("orders").doc(order.id).update({
         status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
       });
@@ -618,7 +628,7 @@ function openConfirmOrderModal(orderId){
   });
 }
 
-async function submitOrderTxn(order, loc, batchDate, unitPrice, taxMode){
+async function submitOrderTxn(order, loc, batchDate, priceInput, taxMode){
   const itemRef = db.collection("items").doc(order.itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -632,7 +642,7 @@ async function submitOrderTxn(order, loc, batchDate, unitPrice, taxMode){
   if(batches[idx].qty <= 0) batches.splice(idx, 1);
   allLocs[loc] = batches.filter(b=>b.qty>0);
   if(allLocs[loc].length === 0) delete allLocs[loc];
-  const amounts = calcAmounts(order.qty, unitPrice, taxMode);
+  const amounts = calcAmounts(order.qty, priceInput, taxMode);
   await itemRef.update({locations: allLocs});
   return await db.collection("transactions").add({
     itemId: order.itemId, type: "out", qty: order.qty, loc, batchDate: targetDate,
@@ -641,7 +651,7 @@ async function submitOrderTxn(order, loc, batchDate, unitPrice, taxMode){
     customerContact: order.customerContact || "", customerNote: order.customerNote || "",
     orderId: order.id, editLog: [],
     createdAt: new Date().toISOString(),
-    unitPrice: Number(unitPrice)||0, taxMode: taxMode||"none",
+    unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
     subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
   });
 }
@@ -650,6 +660,8 @@ function openEditOrderModal(orderId){
   const order = ordersCache.find(o=>o.id===orderId);
   if(!order) return;
   let selectedItemId = order.itemId;
+  const initTaxMode = order.taxMode || "none";
+  const initPrice = initTaxMode === "included" ? (order.total!=null?order.total:0) : (order.unitPrice!=null?order.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>修改訂單</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row">
@@ -660,14 +672,15 @@ function openEditOrderModal(orderId){
     <div class="form-row"><label>目前品項</label><input type="text" id="editOrderItemLabel" value="${escapeHtml(order.itemLabel||'')}" disabled></div>
     <div class="form-row"><label>選擇儲位／批次</label><select id="editOrderLoc"></select></div>
     <div class="form-row"><label>數量</label><input type="number" id="editOrderQty" min="1" value="${order.qty}"></div>
-    <div class="form-row"><label>單價</label><input type="number" id="editOrderUnitPrice" min="0" step="1" value="${order.unitPrice!=null?order.unitPrice:0}"></div>
     <div class="form-row"><label>交易方式</label>
       <select id="editOrderTaxMode">
-        <option value="none" ${(!order.taxMode||order.taxMode==='none')?'selected':''}>不計稅</option>
-        <option value="included" ${order.taxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${order.taxMode==='excluded'?'selected':''}>稅外加</option>
+        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
+        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
+        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
       </select>
     </div>
+    <div class="form-row"><label id="editOrderPriceLabel">單價</label><input type="number" id="editOrderPrice" min="0" step="0.01" value="${initPrice}"></div>
+    <div class="count" id="editOrderPricePreview" style="color:#2451a3;"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editOrderCustomerName" value="${escapeHtml(order.customerName||'')}"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="editOrderCustomerContact" value="${escapeHtml(order.customerContact||'')}"></div>
     <div class="form-row"><label>備註</label><input type="text" id="editOrderCustomerNote" value="${escapeHtml(order.customerNote||'')}"></div>
@@ -676,6 +689,7 @@ function openEditOrderModal(orderId){
       <button class="primary" id="editOrderSaveBtn">儲存</button>
     </div>`;
   openModal(html);
+  wirePriceCalc({ qty:"editOrderQty", taxMode:"editOrderTaxMode", price:"editOrderPrice", label:"editOrderPriceLabel", preview:"editOrderPricePreview" });
 
   let locOptions = [];
   function refreshEditLocOptions(){
@@ -709,7 +723,7 @@ function openEditOrderModal(orderId){
 
   document.getElementById("editOrderSaveBtn").addEventListener("click", async ()=>{
     const qty = Number(document.getElementById("editOrderQty").value);
-    const unitPrice = Number(document.getElementById("editOrderUnitPrice").value) || 0;
+    const priceInput = Number(document.getElementById("editOrderPrice").value) || 0;
     const taxMode = document.getElementById("editOrderTaxMode").value;
     const customerName = document.getElementById("editOrderCustomerName").value.trim();
     const customerContact = document.getElementById("editOrderCustomerContact").value.trim();
@@ -719,11 +733,11 @@ function openEditOrderModal(orderId){
     const itemLabel = it ? `${it.brand} ${it.spec}（${it.model||""}）` : order.itemLabel;
     const locIdx = Number(document.getElementById("editOrderLoc").value);
     const locOpt = locOptions[locIdx];
-    const amounts = calcAmounts(qty, unitPrice, taxMode);
+    const amounts = calcAmounts(qty, priceInput, taxMode);
     try{
       await db.collection("orders").doc(orderId).update({
         itemId: selectedItemId, itemLabel, qty, customerName, customerContact, customerNote,
-        unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
+        unitPrice: amounts.unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
         loc: locOpt ? locOpt.code : null, batchDate: locOpt ? (locOpt.date || null) : null
       });
       closeModal();

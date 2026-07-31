@@ -57,10 +57,11 @@ function openOrderModal(itemId){
     <div class="form-row"><label>數量</label>
       <select id="orderQty"></select>
     </div>
-    <div class="form-row"><label>單價（選填，回報你談好的價格，管理者確認出貨時可以再改）</label><input type="number" id="orderUnitPrice" min="0" step="1"></div>
     <div class="form-row"><label>交易方式</label>
       <select id="orderTaxMode"><option value="none">不計稅</option><option value="included">稅內含</option><option value="excluded">稅外加</option></select>
     </div>
+    <div class="form-row"><label id="orderPriceLabel">單價</label><input type="number" id="orderPrice" min="0" step="0.01" placeholder="選填，回報你談好的價格，管理者確認出貨時可以再改"></div>
+    <div class="count" id="orderPricePreview" style="color:#2451a3;"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="orderCustomerName"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="orderCustomerContact"></div>
     <div class="form-row"><label>備註</label><input type="text" id="orderCustomerNote"></div>
@@ -81,11 +82,16 @@ function openOrderModal(itemId){
   if(options.length) locSelect.addEventListener("change", refreshQtyOptions);
   refreshQtyOptions();
 
+  wirePriceCalc({ qty:"orderQty", taxMode:"orderTaxMode", price:"orderPrice", label:"orderPriceLabel", preview:"orderPricePreview" });
+  document.getElementById("orderQty").addEventListener("change", ()=>{
+    document.getElementById("orderPrice").dispatchEvent(new Event("input"));
+  });
+
   document.getElementById("orderSubmitBtn").addEventListener("click", async ()=>{
     const idx = Number(document.getElementById("orderLoc").value);
     const opt = options[idx];
     const qty = Number(document.getElementById("orderQty").value);
-    const unitPrice = Number(document.getElementById("orderUnitPrice").value) || 0;
+    const priceInput = Number(document.getElementById("orderPrice").value) || 0;
     const taxMode = document.getElementById("orderTaxMode").value;
     const customerName = document.getElementById("orderCustomerName").value.trim();
     const customerContact = document.getElementById("orderCustomerContact").value.trim();
@@ -94,13 +100,13 @@ function openOrderModal(itemId){
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
     if(qty > opt.qty){ alert(`這一批目前只有 ${opt.qty}，不能叫超過這個數量`); return; }
     if(!customerName){ alert("請輸入客戶姓名"); return; }
-    const amounts = calcAmounts(qty, unitPrice, taxMode);
+    const amounts = calcAmounts(qty, priceInput, taxMode);
     try{
       await db.collection("orders").add({
         itemId: item.id,
         itemLabel: `${item.brand} ${item.spec}（${item.model||""}）`,
         qty, loc: opt.code, batchDate: opt.date || null,
-        unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
+        unitPrice: amounts.unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
         customerName, customerContact, customerNote,
         requestedByUid: currentUser.uid, requestedByName: currentUser.name,
         status: "pending", requestedAt: new Date().toISOString()
