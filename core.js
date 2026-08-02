@@ -431,7 +431,8 @@ function startTireListeners(){
     renderTxns();
   }, "tire transactions");
   if(currentUser.role === "admin"){
-    db.collection("orders").where("status","==","pending").onSnapshot(snap=>{
+    // 抓近期訂單（不限狀態），讓「訂單管理」可以查已出貨／已取消的歷史，不是只看待確認的。
+    db.collection("orders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderOrders();
       updateOrdersBadge();
@@ -478,7 +479,8 @@ function startKybListeners(){
     renderKybTxns();
   }, "kyb transactions");
   if(currentUser.role === "admin"){
-    db.collection("kybOrders").where("status","==","pending").onSnapshot(snap=>{
+    // 同輪胎一樣，抓近期全部KYB訂單（不限狀態），讓「訂單管理」可以查歷史。
+    db.collection("kybOrders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybOrders();
       updateKybOrdersBadge();
@@ -508,7 +510,7 @@ function startKybListeners(){
 
 function updateOrdersBadge(){
   const badge = document.getElementById("ordersTabBadge");
-  const n = ordersCache.length;
+  const n = ordersCache.filter(o=>o.status==="pending").length;
   if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
   updateOrdersBannerCombined();
 }
@@ -523,7 +525,7 @@ document.getElementById("dismissOrdersBanner").addEventListener("click", ()=>{
 
 function updateKybOrdersBadge(){
   const badge = document.getElementById("kybOrdersTabBadge");
-  const n = kybOrdersCache.length;
+  const n = kybOrdersCache.filter(o=>o.status==="pending").length;
   if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
   updateOrdersBannerCombined();
 }
@@ -532,8 +534,8 @@ function updateOrdersBannerCombined(){
   const banner = document.getElementById("ordersBanner");
   const bannerText = document.getElementById("ordersBannerText");
   if(!banner || !bannerText) return;
-  const tireN = ordersCache.length;
-  const kybN = kybOrdersCache.length;
+  const tireN = ordersCache.filter(o=>o.status==="pending").length;
+  const kybN = kybOrdersCache.filter(o=>o.status==="pending").length;
   if(tireN === 0 && kybN === 0){ banner.classList.add("hidden"); return; }
   const parts = [];
   if(tireN > 0) parts.push(`輪胎 ${tireN} 筆`);
