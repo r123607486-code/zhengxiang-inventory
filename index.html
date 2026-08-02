@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>正享有限公司庫存管理系統</title>
-<link rel="stylesheet" href="style.css?v=20260801h">
+<link rel="stylesheet" href="style.css?v=20260802a">
 </head>
 <body>
 
@@ -128,14 +128,23 @@
       </div>
     </section>
 
-    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨） -->
+    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨；也可切換查詢已出貨／已取消的歷史訂單） -->
     <section class="page" id="page-orders">
       <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="ordersStatusFilter">
+            <option value="pending" selected>待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
         <div class="count" id="ordersCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="ordersBody"></tbody>
         </table>
       </div>
@@ -256,11 +265,20 @@
     <!-- KYB 訂單管理 -->
     <section class="page" id="page-kyb-orders">
       <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="kybOrdersStatusFilter">
+            <option value="pending" selected>待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
         <div class="count" id="kybOrdersCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>單價</th><th>總額</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="kybOrdersBody"></tbody>
         </table>
       </div>
@@ -322,15 +340,15 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js?v=20260801h"></script>
-<script src="core.js?v=20260801h"></script>
+<script src="core.js?v=20260802a"></script>
 <script src="modal-shared.js?v=20260801h"></script>
 <script src="tire-inventory.js?v=20260801h"></script>
-<script src="tire-transactions-orders.js?v=20260801h"></script>
+<script src="tire-transactions-orders.js?v=20260802a"></script>
 <script src="locations-users.js?v=20260801h"></script>
 <script src="data-import.js?v=20260801h"></script>
 <script src="backup-restore.js?v=20260801h"></script>
 <script src="handover-backup.js?v=20260801h"></script>
 <script src="kyb-inventory.js?v=20260801h"></script>
-<script src="kyb-transactions-orders.js?v=20260801h"></script>
+<script src="kyb-transactions-orders.js?v=20260802a"></script>
 </body>
 </html>
