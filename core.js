@@ -2,10 +2,10 @@
 // 正享有限公司庫存管理系統 — 共用核心（常數／狀態／工具函式／登入／分類切換／分頁／監聽器啟動）
 // ============================================================
 
-// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檸年限（1-9年）才會反紅，不再自動顯示。
+// 效期反紅：改為由使用者在「庫存總表」頁面點擊選擇門檻年限（1-9年）才會反紅，不再自動顯示。
 const DEFAULT_BRANDS = [
-  "賣輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
-  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克NEXEN",
+  "賽輪Sailun","韓泰Hankook","阿基里斯Achilles","安馳ANCHEE","薩馳輪胎ARDUZZA",
+  "黑獅輪胎Blacklion","庫斯通KUSTONE","牛頓輪胎NEUTON","尼克森NEXEN",
   "路德斯通ROAD.STONE","萬峰馳輪胎WINDFORCE","薩提諾ZESTINO"
 ];
 
@@ -34,13 +34,11 @@ let txnCache = [];
 let brandsCache = [];
 let ordersCache = [];
 let myOrdersCache = [];
-let mySalesTxnCache = [];
 
 let kybItemsCache = [];
 let kybLocationsCache = [];
 let kybOrdersCache = [];
 let kybMyOrdersCache = [];
-let kybMySalesTxnCache = [];
 let kybTxnCache = [];
 let usersListenerStarted = false;
 let tireListenersStarted = false;
@@ -50,6 +48,15 @@ let kybQueryVisibleCount = 200;
 
 function norm(s){ return (s || "").toString().toUpperCase().replace(/\s+/g, ""); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
+// 把儲存的 UTC 時間字串（new Date().toISOString()）轉成台灣時間（UTC+8）顯示用字串，格式同原本 "YYYY-MM-DD HH:MM"
+// 只影響畫面顯示，不改變資料庫裡儲存的原始字串，也不影響用原始字串排序的邏輯
+function toTaipeiTimeStr(isoStr){
+  if(!isoStr) return "";
+  const d = new Date(isoStr);
+  if(isNaN(d)) return "";
+  const taipei = new Date(d.getTime() + 8*60*60*1000);
+  return taipei.toISOString().slice(0,16).replace("T"," ");
+}
 function monthsBetween(dateStr){
   if(!dateStr) return null;
   const m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(String(dateStr).trim());
@@ -124,27 +131,6 @@ function escapeHtml(s){
   return (s==null?"":s.toString()).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// 業務欄位共用建構：管理者看到的是下拉選單（選項來自使用者管理裡的員工＋管理者），
-// 非管理者（員工自己新增進銷貨）維持原本的自由輸入文字框。
-// 若現有值（例如編輯舊紀錄）不在使用者清單裡（例如已離職、舊自由輸入的名字），
-// 會否列一個「現有值」的選項並預選，避免不小心切換選單後把舊資料消失。
-function salespersonFieldHtml(id, currentValue){
-  if(currentUser && currentUser.role === "admin"){
-    const names = (usersCache||[]).filter(u=> u.active !== false).map(u=> (u.name||"").trim()).filter(Boolean);
-    const uniqueNames = [...new Set(names)].sort((a,b)=> a.localeCompare(b, "zh-Hant"));
-    let matched = false;
-    let optionsHtml = `<option value="">請選擇</option>` + uniqueNames.map(n=>{
-      if(n === currentValue) matched = true;
-      return `<option value="${escapeHtml(n)}" ${n===currentValue?'selected':''}>${escapeHtml(n)}</option>`;
-    }).join("");
-    if(currentValue && !matched){
-      optionsHtml += `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue)}（現有值，不在使用者清單中）</option>`;
-    }
-    return `<select id="${id}">${optionsHtml}</select>`;
-  }
-  return `<input type="text" id="${id}" value="${escapeHtml(currentValue||"")}" placeholder="銷貨時會自動帶入登入者姓名，可自行修改">`;
-}
-
 function kybLocQty(loc){ return Number(loc)||0; }
 function kybTotalQty(item){
   const locs = item.locations || {};
@@ -162,84 +148,6 @@ function kybLocSummary(item){
 }
 function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
-}
-
-// ---- 進銷貨/校正 共用邏輯：type 可能是 "in"（進貨）、"out"（銷貨）、"adjust"（庫存校正）----
-// txnSign：這筆紀錄「套用」時對庫存的正負號；還原時取相反數 (-txnSign(t))。
-function txnSign(t){
-  if(t.type === "adjust") return t.adjustSign === "-" ? -1 : 1;
-  return t.type === "in" ? 1 : -1;
-}
-function txnTypeLabel(t){
-  if(t.type === "adjust") return t.adjustSign === "-" ? "庫存校正（調降）" : "庫存校正（調升）";
-  return t.type === "in" ? "進貨" : "銷貨";
-}
-
-// ---- 金額／稅別共用計算：taxMode 為 "included"（稅內含）、"excluded"（稅外加）、"none"（不計稅）----
-// 稅率固定 5%，所有金額四舍五入到小數點後兩位。
-// priceInput 的意義依 taxMode 而不同：
-//   - "excluded"／"none"：priceInput 是使用者填的「單價」，系統算出總額。
-//   - "included"：priceInput 是使用者填的「總價」（這筆數量的整筆含稅金額），系統反推單價（未稅單價）。
-// 回傳的 unitPrice 一律代表「未稅單價」，方便報表統一比較。
-function round2(n){ return Math.round((Number(n)||0) * 100) / 100; }
-function calcAmounts(qty, priceInput, taxMode){
-  const q = Number(qty) || 0;
-  const p = Number(priceInput) || 0;
-  if(taxMode === "excluded"){
-    const subtotal = round2(q * p);
-    const taxAmount = round2(subtotal * 0.05);
-    const total = round2(subtotal + taxAmount);
-    return { unitPrice: p, subtotal, taxAmount, total };
-  }
-  if(taxMode === "included"){
-    const total = round2(p);
-    const subtotal = round2(total / 1.05);
-    const taxAmount = round2(total - subtotal);
-    const unitPrice = q ? round2(subtotal / q) : 0;
-    return { unitPrice, subtotal, taxAmount, total };
-  }
-  const subtotal = round2(q * p);
-  return { unitPrice: p, subtotal, taxAmount: 0, total: subtotal };
-}
-function taxModeLabel(m){
-  return { included: "稅內含", excluded: "稅外加", none: "不計稅" }[m] || "-";
-}
-
-// ---- 表單共用：價格欄位隨稅別切換「單價／總價」標籤，並即時顯示換算結果 ----
-// ids: { qty, taxMode, price, label, preview }，對應表單裡對應欄位的 element id。
-function wirePriceCalc(ids){
-  const qtyEl = document.getElementById(ids.qty);
-  const taxModeEl = document.getElementById(ids.taxMode);
-  const priceEl = document.getElementById(ids.price);
-  const labelEl = document.getElementById(ids.label);
-  const previewEl = document.getElementById(ids.preview);
-  function update(){
-    const taxMode = taxModeEl.value;
-    if(taxMode === "included"){
-      labelEl.textContent = "總價（這筆數量的含稅總金額）";
-      priceEl.placeholder = "例如 1000";
-    } else {
-      labelEl.textContent = "單價";
-      priceEl.placeholder = "";
-    }
-    const qty = Number(qtyEl.value) || 0;
-    const priceVal = Number(priceEl.value) || 0;
-    if(!previewEl) return;
-    if(!qty || !priceVal){ previewEl.textContent = ""; return; }
-    const r = calcAmounts(qty, priceVal, taxMode);
-    if(taxMode === "included"){
-      previewEl.textContent = `換算單價（未稅）：${r.unitPrice}　（未稅小計 ${r.subtotal}，稅額 ${r.taxAmount}）`;
-    } else if(taxMode === "excluded"){
-      previewEl.textContent = `總額：${r.total}　（未稅小計 ${r.subtotal}，稅額 ${r.taxAmount}）`;
-    } else {
-      previewEl.textContent = `總額：${r.total}`;
-    }
-  }
-  [qtyEl, taxModeEl, priceEl].forEach(el=>{
-    el.addEventListener("input", update);
-    el.addEventListener("change", update);
-  });
-  update();
 }
 
 document.getElementById("loginBtn").addEventListener("click", doLogin);
@@ -309,7 +217,7 @@ const TIRE_TAB_DEFS = [
   {id:"query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
   {id:"myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
   {id:"master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
+  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin"]},
   {id:"orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
   {id:"loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
   {id:"import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
@@ -319,7 +227,7 @@ const KYB_TAB_DEFS = [
   {id:"kyb-query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
   {id:"kyb-myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
   {id:"kyb-master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
+  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin"]},
   {id:"kyb-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
   {id:"kyb-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
   {id:"kyb-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
@@ -388,74 +296,28 @@ function startListeners(){
   }
 }
 
-function startRealtimeListener(makeQuery, onData, label){
-  const subscribe = ()=>{
-    makeQuery().onSnapshot(onData, error=>{
-      console.error("[" + label + "] 即時同步失敗：", error);
-      window.setTimeout(subscribe, 3000);
-    });
-  };
-  subscribe();
-}
-
-async function refreshTireViews(){
-  const [itemsSnap, txnsSnap] = await Promise.all([
-    db.collection("items").get(),
-    db.collection("transactions").orderBy("date","desc").limit(200).get()
-  ]);
-  itemsCache = itemsSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  txnCache = txnsSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  renderQuery(); renderMaster(); renderTxns();
-}
-
-async function refreshKybViews(){
-  const [itemsSnap, txnsSnap] = await Promise.all([
-    db.collection("kybItems").get(),
-    db.collection("kybTransactions").orderBy("date","desc").limit(200).get()
-  ]);
-  kybItemsCache = itemsSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  kybTxnCache = txnsSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  renderKybQuery(); renderKybMaster(); renderKybTxns();
-}
 function startTireListeners(){
-  startRealtimeListener(()=>db.collection("items"), snap=>{
+  db.collection("items").onSnapshot(snap=>{
     itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderQuery(); renderMaster();
-  }, "tire items");
-  startRealtimeListener(()=>db.collection("locations"), snap=>{
+  });
+  db.collection("locations").onSnapshot(snap=>{
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
-  }, "tire locations");
-  startRealtimeListener(()=>db.collection("transactions").orderBy("date","desc").limit(200), snap=>{
-    txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderTxns();
-  }, "tire transactions");
+  });
   if(currentUser.role === "admin"){
-    // 抓近期訂單（不限狀態），讓「訂單管理」可以查已出貨／已取消的歷史，不是只看待確認的。
-    db.collection("orders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    db.collection("transactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+      txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderTxns();
+    });
+    db.collection("orders").where("status","==","pending").onSnapshot(snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderOrders();
       updateOrdersBadge();
     });
   } else {
-    let myOrdersByUid = [], myOrdersByName = [];
-    const refreshMyOrders = ()=>{
-      const merged = new Map([...myOrdersByName, ...myOrdersByUid].map(o=>[o.id, o]));
-      myOrdersCache = [...merged.values()];
-      renderMyOrders();
-    };
     db.collection("orders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
-      myOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyOrders();
-    });
-    db.collection("orders").where("requestedByName","==",currentUser.name).onSnapshot(snap=>{
-      myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyOrders();
-    });
-    // 這个把「自己名下的進銷貨紀錄」也拉進來（不管是叫貨核准產生的，還是自己直接在進銷貨管理新增的），
-    // 排除有 orderId 的（那些已經由上面的訂單列表代表，避免在「我的訂單」重複顯示兩次。
-    db.collection("transactions").where("salesperson","==",currentUser.name).onSnapshot(snap=>{
-      mySalesTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(t=> !t.orderId);
+      myOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderMyOrders();
     });
   }
@@ -466,43 +328,27 @@ function startTireListeners(){
 }
 
 function startKybListeners(){
-  startRealtimeListener(()=>db.collection("kybItems"), snap=>{
+  db.collection("kybItems").onSnapshot(snap=>{
     kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybQuery(); renderKybMaster();
-  }, "kyb items");
-  startRealtimeListener(()=>db.collection("kybLocations"), snap=>{
+  });
+  db.collection("kybLocations").onSnapshot(snap=>{
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
-  }, "kyb locations");
-  startRealtimeListener(()=>db.collection("kybTransactions").orderBy("date","desc").limit(200), snap=>{
-    kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderKybTxns();
-  }, "kyb transactions");
+  });
   if(currentUser.role === "admin"){
-    // 同輪胎一樣，抓近期全部KYB訂單（不限狀態），讓「訂單管理」可以查歷史。
-    db.collection("kybOrders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    db.collection("kybTransactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+      kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderKybTxns();
+    });
+    db.collection("kybOrders").where("status","==","pending").onSnapshot(snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybOrders();
       updateKybOrdersBadge();
     });
   } else {
-    let myKybOrdersByUid = [], myKybOrdersByName = [];
-    const refreshMyKybOrders = ()=>{
-      const merged = new Map([...myKybOrdersByName, ...myKybOrdersByUid].map(o=>[o.id, o]));
-      kybMyOrdersCache = [...merged.values()];
-      renderKybMyOrders();
-    };
     db.collection("kybOrders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
-      myKybOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyKybOrders();
-    });
-    db.collection("kybOrders").where("requestedByName","==",currentUser.name).onSnapshot(snap=>{
-      myKybOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyKybOrders();
-    });
-    // 同輪胎一樣，把自己名下的KYB進銷貨紀錄也拉進「我的訂單」，排除已經連結訂單的（避免重複）。
-    db.collection("kybTransactions").where("salesperson","==",currentUser.name).onSnapshot(snap=>{
-      kybMySalesTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(t=> !t.orderId);
+      kybMyOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybMyOrders();
     });
   }
@@ -510,7 +356,7 @@ function startKybListeners(){
 
 function updateOrdersBadge(){
   const badge = document.getElementById("ordersTabBadge");
-  const n = ordersCache.filter(o=>o.status==="pending").length;
+  const n = ordersCache.length;
   if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
   updateOrdersBannerCombined();
 }
@@ -525,7 +371,7 @@ document.getElementById("dismissOrdersBanner").addEventListener("click", ()=>{
 
 function updateKybOrdersBadge(){
   const badge = document.getElementById("kybOrdersTabBadge");
-  const n = kybOrdersCache.filter(o=>o.status==="pending").length;
+  const n = kybOrdersCache.length;
   if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
   updateOrdersBannerCombined();
 }
@@ -534,8 +380,8 @@ function updateOrdersBannerCombined(){
   const banner = document.getElementById("ordersBanner");
   const bannerText = document.getElementById("ordersBannerText");
   if(!banner || !bannerText) return;
-  const tireN = ordersCache.filter(o=>o.status==="pending").length;
-  const kybN = kybOrdersCache.filter(o=>o.status==="pending").length;
+  const tireN = ordersCache.length;
+  const kybN = kybOrdersCache.length;
   if(tireN === 0 && kybN === 0){ banner.classList.add("hidden"); return; }
   const parts = [];
   if(tireN > 0) parts.push(`輪胎 ${tireN} 筆`);
