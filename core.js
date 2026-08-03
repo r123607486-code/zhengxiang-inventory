@@ -154,6 +154,26 @@ function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
 }
 
+// 業務欄位共用元件（輪胎／KYB 共用）：
+// 管理者：顯示下拉選單，選項來自「使用者管理」裡啟用中的員工＋管理者；
+//         如果原本存的值不在目前使用者清單裡（例如已離職員工），會多加一個選項顯示原值並預選它，不會被無聲蓋掉。
+// 員工本人：不用選，直接鎖定顯示自己的姓名（唯讀），送出時就是自己。
+function salespersonFieldHtml(fieldId, currentValue){
+  if(!currentUser || currentUser.role !== "admin"){
+    return `<div class="form-row"><label>業務</label><input type="text" id="${fieldId}" value="${escapeHtml(currentUser?currentUser.name:"")}" disabled></div>`;
+  }
+  const cur = (currentValue||"").toString().trim();
+  const activeNames = Array.from(new Set(
+    usersCache.filter(u=>u.active!==false && u.name).map(u=>u.name)
+  ));
+  let optionsHtml = `<option value="">（未指定）</option>` +
+    activeNames.map(n=>`<option value="${escapeHtml(n)}" ${n===cur?'selected':''}>${escapeHtml(n)}</option>`).join("");
+  if(cur && !activeNames.includes(cur)){
+    optionsHtml += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(cur)}（現有值，不在使用者清單中）</option>`;
+  }
+  return `<div class="form-row"><label>業務</label><select id="${fieldId}">${optionsHtml}</select></div>`;
+}
+
 document.getElementById("loginBtn").addEventListener("click", doLogin);
 document.getElementById("loginPassword").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 
