@@ -1,8 +1,7 @@
 // ============================================================
-// KYB：進銷貨管理 / 庫存校正 / 訂單管理 / 我的訂單 / 儲位管理
+// KYB：進銷貨管理 / 訂單管理 / 我的訂單 / 儲位管理
 // ============================================================
 document.getElementById("kybNewTxnBtn").addEventListener("click", openKybTxnModal);
-document.getElementById("kybNewAdjustBtn").addEventListener("click", openKybAdjustTxnModal);
 document.getElementById("kybNewItemBtn").addEventListener("click", openNewKybItemModal);
 document.getElementById("kybTxnFilterFrom").addEventListener("change", renderKybTxns);
 document.getElementById("kybTxnFilterTo").addEventListener("change", renderKybTxns);
@@ -29,7 +28,7 @@ function renderKybTxns(){
   if(salesQ) list = list.filter(t=> norm(t.salesperson || t.operator || "").includes(salesQ));
   if(custQ) list = list.filter(t=> norm(t.customerName || "").includes(custQ));
 
-  // 新做的動作排越上方：優先用 createdAt(精確時間戳記)排序，沒有的舊資料用 date 當備援
+  // 新做的動作排越上方：優先用createdAt(精確時間戳記)排序，沒有的舊資料用date當備援
   list.sort((a,b)=> (b.createdAt||b.date||"").localeCompare(a.createdAt||a.date||""));
 
   document.getElementById("kybTxnCount").textContent = `共 ${list.length} 筆`;
@@ -38,17 +37,15 @@ function renderKybTxns(){
     const label = item ? item.carModel : "(車型已刪除)";
     return `<tr>
       <td>${escapeHtml(t.date)}</td>
-      <td>${txnTypeLabel(t)}</td>
+      <td>${t.type==='in'?'進貨':'銷貨'}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
-      <td>${t.unitPrice!=null?t.unitPrice:"-"}</td>
-      <td>${t.total!=null?t.total:"-"}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
       <td>${escapeHtml(t.customerName||"")}</td>
       <td>${escapeHtml(t.operator||"")}</td>
       <td><button data-edit="${t.id}">編輯</button> <button data-del="${t.id}">刪除</button></td>
     </tr>`;
-  }).join("") || `<tr><td colspan="10" class="empty">尚無紀錄</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">尚無紀錄</td></tr>`;
 
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openEditKybTxnModal(b.dataset.edit)));
   body.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", ()=>deleteKybTxn(b.dataset.del)));
@@ -70,12 +67,6 @@ function openKybTxnModal(){
     <div class="form-row"><label>儲位</label>
       <select id="kybTxnLoc"><option value="">請先選擇車型</option></select>
     </div>
-    <div class="form-row"><label>交易方式</label>
-      <select id="kybTxnTaxMode"><option value="none">不計稅</option><option value="included">稅內含</option><option value="excluded">稅外加</option></select>
-    </div>
-    <div class="form-row"><label id="kybTxnPriceLabel">單價</label><input type="number" id="kybTxnPrice" min="0" step="0.01" placeholder="選填，一律自行輸入"></div>
-    <div class="count" id="kybTxnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label>${salespersonFieldHtml("kybTxnSalesperson", "")}</div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="kybTxnSubmitBtn">確認送出</button>
@@ -87,10 +78,6 @@ function openKybTxnModal(){
     const type = document.getElementById("kybTxnType").value;
     const locSelect = document.getElementById("kybTxnLoc");
     const it = kybItemsCache.find(i=>i.id===selectedItemId);
-    if(type === "out"){
-      const spEl = document.getElementById("kybTxnSalesperson");
-      if(spEl && !spEl.value.trim()) spEl.value = currentUser.name;
-    }
     if(!it){ locSelect.innerHTML = `<option value="">請先選擇車型</option>`; return; }
     if(type === "out"){
       const options = kybLocList(it);
@@ -104,7 +91,6 @@ function openKybTxnModal(){
     }
   }
   document.getElementById("kybTxnType").addEventListener("change", refreshLocOptions);
-  wirePriceCalc({ qty:"kybTxnQty", taxMode:"kybTxnTaxMode", price:"kybTxnPrice", label:"kybTxnPriceLabel", preview:"kybTxnPricePreview" });
 
   const searchInput = document.getElementById("kybTxnItemSearch");
   searchInput.addEventListener("input", ()=>{
@@ -124,14 +110,11 @@ function openKybTxnModal(){
     }));
   });
 
-  document.getElementById("kybTxnSubmitBtn").addEventListener("click", async ()=>{
+  document.getElementById("kybTxnSubmitBtn").addEventListener("click", ()=>{
     if(!selectedItemId){ alert("請先搜尋並選擇一個車型"); return; }
     const type = document.getElementById("kybTxnType").value;
     const qty = Number(document.getElementById("kybTxnQty").value);
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
-    const priceInput = Number(document.getElementById("kybTxnPrice").value) || 0;
-    const taxMode = document.getElementById("kybTxnTaxMode").value;
-    const salesperson = document.getElementById("kybTxnSalesperson").value.trim();
 
     let loc;
     if(type === "out"){
@@ -144,16 +127,11 @@ function openKybTxnModal(){
       loc = document.getElementById("kybTxnLoc").value;
       if(!loc){ alert("請選擇儲位"); return; }
     }
-    try{
-      await submitKybTxn(selectedItemId, type, qty, loc, priceInput, taxMode, salesperson);
-    }catch(e){
-      console.error("KYB 進銷貨送出失敗：", e);
-      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
-    }
+    submitKybTxn(selectedItemId, type, qty, loc);
   });
 }
 
-async function submitKybTxn(itemId, type, qty, loc, priceInput, taxMode, salesperson){
+async function submitKybTxn(itemId, type, qty, loc){
   const itemRef = db.collection("kybItems").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -162,133 +140,15 @@ async function submitKybTxn(itemId, type, qty, loc, priceInput, taxMode, salespe
   const next = type === "in" ? cur + qty : cur - qty;
   if(next < 0) throw new Error("庫存不足，無法出貨");
   if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  const amounts = calcAmounts(qty, priceInput, taxMode);
   await itemRef.update({locations: allLocs});
   await db.collection("kybTransactions").add({
     itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: [],
-    createdAt: new Date().toISOString(),
-    salesperson: salesperson || "",
-    unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
-    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
-  });
-  await refreshKybViews();
-  closeModal();
-}
-
-// 庫存校正：用於盤點差異、破損報庳、輸入錯誤等情形下直接調整庫存，與進貨／銷貨屬於不同的紀錄類型（type="adjust"），不會被算入銷貨業績。
-function openKybAdjustTxnModal(){
-  const html = `
-    <div class="sheet-head"><h2>庫存校正</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
-    <div class="form-row"><label>方向</label>
-      <select id="kybAdjustSign"><option value="+">調正（增加庫存）</option><option value="-">調負（減少庫存）</option></select>
-    </div>
-    <div class="form-row">
-      <label>搜尋車型</label>
-      <input type="text" id="kybAdjustItemSearch" placeholder="例如 Altis">
-      <div class="autocomplete-list hidden" id="kybAdjustItemList"></div>
-    </div>
-    <div class="form-row"><label>已選車型</label><input type="text" id="kybAdjustItemLabel" disabled></div>
-    <div class="form-row"><label>數量</label><input type="number" id="kybAdjustQty" min="1"></div>
-    <div class="form-row"><label>儲位</label>
-      <select id="kybAdjustLoc"><option value="">請先選擇車型</option></select>
-    </div>
-    <div class="form-row"><label>校正原因</label>
-      <select id="kybAdjustReason">
-        <option value="盤點差異">盤點差異</option>
-        <option value="破損報庳">破損報庳</option>
-        <option value="輸入錯誤">輸入錯誤</option>
-        <option value="其他">其他</option>
-      </select>
-    </div>
-    <div class="form-actions">
-      <button onclick="closeModal()">取消</button>
-      <button class="primary" id="kybAdjustSubmitBtn">確認送出</button>
-    </div>`;
-  openModal(html);
-  let selectedItemId = null;
-
-  function refreshLocOptions(){
-    const sign = document.getElementById("kybAdjustSign").value;
-    const locSelect = document.getElementById("kybAdjustLoc");
-    const it = kybItemsCache.find(i=>i.id===selectedItemId);
-    if(!it){ locSelect.innerHTML = `<option value="">請先選擇車型</option>`; return; }
-    if(sign === "-"){
-      const options = kybLocList(it);
-      window._kybAdjustOutOptions = options;
-      locSelect.innerHTML = options.length
-        ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("")
-        : `<option value="">這個車型目前沒有庫存可以調負</option>`;
-    } else {
-      window._kybAdjustOutOptions = [];
-      locSelect.innerHTML = kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
-    }
-  }
-  document.getElementById("kybAdjustSign").addEventListener("change", refreshLocOptions);
-
-  const searchInput = document.getElementById("kybAdjustItemSearch");
-  searchInput.addEventListener("input", ()=>{
-    const q = norm(searchInput.value);
-    const listEl = document.getElementById("kybAdjustItemList");
-    if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
-    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
-    listEl.classList.toggle("hidden", matches.length===0);
-    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
-      selectedItemId = d.dataset.id;
-      const it = kybItemsCache.find(i=>i.id===selectedItemId);
-      document.getElementById("kybAdjustItemLabel").value = kybItemLabel(it);
-      listEl.classList.add("hidden");
-      searchInput.value = "";
-      refreshLocOptions();
-    }));
-  });
-
-  document.getElementById("kybAdjustSubmitBtn").addEventListener("click", async ()=>{
-    if(!selectedItemId){ alert("請先搜尋並選擇一個車型"); return; }
-    const sign = document.getElementById("kybAdjustSign").value;
-    const qty = Number(document.getElementById("kybAdjustQty").value);
-    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
-    const reason = document.getElementById("kybAdjustReason").value;
-
-    let loc;
-    if(sign === "-"){
-      const idx = Number(document.getElementById("kybAdjustLoc").value);
-      const opt = (window._kybAdjustOutOptions||[])[idx];
-      if(!opt){ alert("請選擇要調負的儲位"); return; }
-      loc = opt.code;
-      if(qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不能調負 ${qty}`); return; }
-    } else {
-      loc = document.getElementById("kybAdjustLoc").value;
-      if(!loc){ alert("請選擇儲位"); return; }
-    }
-    try{
-      await submitKybAdjustTxn(selectedItemId, sign, qty, loc, reason);
-    }catch(e){
-      console.error("KYB 庫存校正送出失敗：", e);
-      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
-    }
-  });
-}
-
-async function submitKybAdjustTxn(itemId, adjustSign, qty, loc, reason){
-  const itemRef = db.collection("kybItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = kybLocQty(allLocs[loc]);
-  const next = adjustSign === "+" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法調負");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  await db.collection("kybTransactions").add({
-    itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(), operator: currentUser.name, reason, editLog: [],
     createdAt: new Date().toISOString()
   });
-  await refreshKybViews();
   closeModal();
 }
 
-// 編輯進銷貨／校正紀錄：日期、數量、儲位、業務、客戶姓名、單價／總價、交易方式都可以改，類型不能改。
+// 編輯進銷貨紀錄：日期、數量、儲位、業務、客戶姓名都可以改。
 // 儲位一定要從現有儲位清單選（不能自己打字）。
 // 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
 function openEditKybTxnModal(txnId){
@@ -296,47 +156,33 @@ function openEditKybTxnModal(txnId){
   if(!t) return;
   const item = kybItemsCache.find(i=>i.id===t.itemId);
   const itemLabel = item ? kybItemLabel(item) : "(車型已刪除，仍可編輯其他資訊，但無法改儲位)";
-  const initTaxMode = t.taxMode || "none";
-  const initPrice = initTaxMode === "included" ? (t.total!=null?t.total:0) : (t.unitPrice!=null?t.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
-    <div class="form-row"><label>類型</label><input type="text" value="${txnTypeLabel(t)}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
     <div class="form-row"><label>日期</label><input type="date" id="editKybTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
     <div class="form-row"><label>數量</label><input type="number" id="editKybTxnQty" min="1" value="${t.qty}"></div>
     <div class="form-row"><label>儲位</label>
       <select id="editKybTxnLoc">${kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
     </div>
-    <div class="form-row"><label>交易方式</label>
-      <select id="editKybTxnTaxMode">
-        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
-        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
-      </select>
-    </div>
-    <div class="form-row"><label id="editKybTxnPriceLabel">單價</label><input type="number" id="editKybTxnPrice" min="0" step="0.01" value="${initPrice}"></div>
-    <div class="count" id="editKybTxnPricePreview" style="color:#2451a3;"></div>
-    <div class="form-row"><label>業務</label>${salespersonFieldHtml("editKybTxnSalesperson", t.salesperson||"")}</div>
+    <div class="form-row"><label>業務</label><input type="text" id="editKybTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editKybTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="editKybTxnSaveBtn">儲存</button>
     </div>`;
   openModal(html);
-  wirePriceCalc({ qty:"editKybTxnQty", taxMode:"editKybTxnTaxMode", price:"editKybTxnPrice", label:"editKybTxnPriceLabel", preview:"editKybTxnPricePreview" });
 
   document.getElementById("editKybTxnSaveBtn").addEventListener("click", async ()=>{
     const newDate = document.getElementById("editKybTxnDate").value || todayStr();
     const newQty = Number(document.getElementById("editKybTxnQty").value);
     const newLoc = document.getElementById("editKybTxnLoc").value;
-    const newPriceInput = Number(document.getElementById("editKybTxnPrice").value) || 0;
-    const newTaxMode = document.getElementById("editKybTxnTaxMode").value;
     const newSalesperson = document.getElementById("editKybTxnSalesperson").value.trim();
     const newCustomerName = document.getElementById("editKybTxnCustomerName").value.trim();
     if(!newQty || newQty<=0){ alert("請輸入正確的數量"); return; }
     if(!newLoc){ alert("請選擇儲位"); return; }
     try{
-      await saveEditKybTxn(t, { date:newDate, qty:newQty, loc:newLoc, priceInput:newPriceInput, taxMode:newTaxMode, salesperson:newSalesperson, customerName:newCustomerName });
+      await saveEditKybTxn(t, { date:newDate, qty:newQty, loc:newLoc, salesperson:newSalesperson, customerName:newCustomerName });
       closeModal();
     }catch(e){
       alert("儲存失敗："+e.message);
@@ -351,57 +197,49 @@ async function saveEditKybTxn(t, next){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原
-    const oldSign = -txnSign(t);
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
+    const oldSign = t.type === "in" ? -1 : 1;
     const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
     if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
 
     // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
-    const newSign = txnSign(t);
+    const newSign = t.type === "in" ? 1 : -1;
     const curAtNewLoc = kybLocQty(allLocs[next.loc]);
     const resultQty = curAtNewLoc + next.qty*newSign;
-    if(newSign < 0 && resultQty < 0){
-      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+    if(t.type === "out" && resultQty < 0){
+      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成銷貨 ${next.qty}`);
     }
     if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
 
     await itemRef.update({ locations: allLocs });
   }
 
-  const amounts = calcAmounts(next.qty, next.priceInput, next.taxMode);
   await db.collection("kybTransactions").doc(t.id).update({
     date: next.date, qty: next.qty, loc: next.loc,
     salesperson: next.salesperson, customerName: next.customerName,
-    unitPrice: amounts.unitPrice, taxMode: next.taxMode||"none",
-    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
     editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"", unitPrice:t.unitPrice||0, taxMode:t.taxMode||"none", total:t.total||0 },
-      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName, unitPrice:amounts.unitPrice, taxMode:next.taxMode, total:amounts.total },
+      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
       time: new Date().toISOString(), by: currentUser.name
     })
   });
-  await refreshKybViews();
 }
 
 async function deleteKybTxn(txnId){
   const t = kybTxnCache.find(x=>x.id===txnId);
   if(!t) return;
-  if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
+  if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去）")) return;
   const itemRef = db.collection("kybItems").doc(t.itemId);
   const itemSnap = await itemRef.get();
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
-    const sign = -txnSign(t);
+    const sign = t.type === "in" ? -1 : 1;
     const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
     if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
     await itemRef.update({locations: allLocs});
   }
-  await db.collection("editLogs").add({
-    txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
-  });
   await db.collection("kybTransactions").doc(txnId).delete();
-  await refreshKybViews();
 }
 
 function openNewKybItemModal(){
@@ -440,44 +278,26 @@ function openNewKybItemModal(){
   });
 }
 
-document.getElementById("kybOrdersStatusFilter").addEventListener("change", renderKybOrders);
-
 function renderKybOrders(){
   const body = document.getElementById("kybOrdersBody");
   if(!body) return;
-  const filterEl = document.getElementById("kybOrdersStatusFilter");
-  const filter = filterEl ? filterEl.value : "pending";
-  let list = kybOrdersCache.slice();
-  if(filter !== "all") list = list.filter(o=> o.status === filter);
-  const isPendingView = filter === "pending";
-  document.getElementById("kybOrdersCount").textContent = isPendingView ? `共 ${list.length} 筆待確認` : `共 ${list.length} 筆`;
-  const sorted = list.sort((a,b)=> isPendingView
-    ? (a.requestedAt||"").localeCompare(b.requestedAt||"")
-    : (b.requestedAt||"").localeCompare(a.requestedAt||""));
-  body.innerHTML = sorted.map(o=>{
-    const historyNote = [
-      o.confirmedAt ? `出貨於 ${escapeHtml((o.confirmedAt||"").slice(0,16).replace("T"," "))}${o.confirmedBy?`（${escapeHtml(o.confirmedBy)}）`:""}` : "",
-      o.cancelledAt ? `取消於 ${escapeHtml((o.cancelledAt||"").slice(0,16).replace("T"," "))}${o.cancelledBy?`（${escapeHtml(o.cancelledBy)}）`:""}` : ""
-    ].filter(Boolean).join("　");
-    return `<tr>
-    <td>${escapeHtml((o.requestedAt||"").slice(0,16).replace("T"," "))}</td>
+  document.getElementById("kybOrdersCount").textContent = `共 ${kybOrdersCache.length} 筆待確認`;
+  const sorted = kybOrdersCache.slice().sort((a,b)=> (a.requestedAt||"").localeCompare(b.requestedAt||""));
+  body.innerHTML = sorted.map(o=>`<tr>
+    <td>${escapeHtml(toTaipeiTimeStr(o.requestedAt))}</td>
     <td>${escapeHtml(o.requestedByName||"")}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
-    <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
-    <td>${o.total!=null?o.total:"-"}</td>
     <td>${o.loc?escapeHtml(o.loc):'<span class="empty-inline">未選</span>'}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
     <td>${escapeHtml(o.customerContact||"")}</td>
     <td>${escapeHtml(o.customerNote||"")}</td>
-    <td>${ORDER_STATUS_LABELS[o.status] || o.status || "-"}</td>
-    <td>${o.status === "pending" ? `
+    <td>
       <button data-confirm="${o.id}">確認</button>
       <button data-edit="${o.id}">修改</button>
       <button data-cancel="${o.id}">取消</button>
-    ` : `<span class="empty-inline">${historyNote}</span>`}</td>
-  </tr>`;
-  }).join("") || `<tr><td colspan="12" class="empty">目前沒有符合條件的訂單</td></tr>`;
+    </td>
+  </tr>`).join("") || `<tr><td colspan="9" class="empty">目前沒有待確認訂單</td></tr>`;
 
   body.querySelectorAll("[data-confirm]").forEach(b=>b.addEventListener("click", ()=> openConfirmKybOrderModal(b.dataset.confirm)));
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=> openEditKybOrderModal(b.dataset.edit)));
@@ -497,32 +317,20 @@ function openConfirmKybOrderModal(orderId){
   const employeePickNote = order.loc
     ? `<div class="note" style="background:#eef4ff;color:#2451a3;">員工原本選擇：${escapeHtml(order.loc)}，如需要可在下方改選其他儲位。</div>`
     : "";
-  const initTaxMode = order.taxMode || "none";
-  const initPrice = initTaxMode === "included" ? (order.total!=null?order.total:0) : (order.unitPrice!=null?order.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>確認出貨：${escapeHtml(order.itemLabel||"")}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>客戶</label><input type="text" value="${escapeHtml(order.customerName||'')}（${escapeHtml(order.customerContact||'')}）" disabled></div>
-    <div class="form-row"><label>數量</label><input type="text" id="kybConfirmQty" value="${order.qty}" disabled></div>
+    <div class="form-row"><label>數量</label><input type="text" value="${order.qty}" disabled></div>
     ${employeePickNote}
     <div class="form-row"><label>選擇要出貨的儲位</label>
       <select id="kybConfirmLoc">${options.map((o,i)=>`<option value="${i}" ${i===defaultIdx?'selected':''}>${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("")}</select>
     </div>
-    <div class="form-row"><label>交易方式</label>
-      <select id="kybConfirmTaxMode">
-        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
-        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
-      </select>
-    </div>
-    <div class="form-row"><label id="kybConfirmPriceLabel">單價（員工原回報值，可以改）</label><input type="number" id="kybConfirmPrice" min="0" step="0.01" value="${initPrice}"></div>
-    <div class="count" id="kybConfirmPricePreview" style="color:#2451a3;"></div>
     <div class="count" id="kybConfirmStockWarn" style="color:#a31e22;"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
       <button class="primary" id="kybConfirmOrderSubmitBtn">確認出貨</button>
     </div>`;
   openModal(html);
-  wirePriceCalc({ qty:"kybConfirmQty", taxMode:"kybConfirmTaxMode", price:"kybConfirmPrice", label:"kybConfirmPriceLabel", preview:"kybConfirmPricePreview" });
 
   function refreshWarn(){
     const idx = Number(document.getElementById("kybConfirmLoc").value);
@@ -538,10 +346,8 @@ function openConfirmKybOrderModal(orderId){
     const opt = options[idx];
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不夠出 ${order.qty}，請選別的儲位，或先用「修改」調整這筆訂單的數量`); return; }
-    const priceInput = Number(document.getElementById("kybConfirmPrice").value) || 0;
-    const taxMode = document.getElementById("kybConfirmTaxMode").value;
     try{
-      const txnRef = await submitKybOrderTxn(order, opt.code, priceInput, taxMode);
+      const txnRef = await submitKybOrderTxn(order, opt.code);
       await db.collection("kybOrders").doc(order.id).update({
         status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
       });
@@ -552,7 +358,7 @@ function openConfirmKybOrderModal(orderId){
   });
 }
 
-async function submitKybOrderTxn(order, loc, priceInput, taxMode){
+async function submitKybOrderTxn(order, loc){
   const itemRef = db.collection("kybItems").doc(order.itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -561,7 +367,6 @@ async function submitKybOrderTxn(order, loc, priceInput, taxMode){
   if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
   const next = cur - order.qty;
   if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  const amounts = calcAmounts(order.qty, priceInput, taxMode);
   await itemRef.update({locations: allLocs});
   return await db.collection("kybTransactions").add({
     itemId: order.itemId, type: "out", qty: order.qty, loc,
@@ -569,9 +374,7 @@ async function submitKybOrderTxn(order, loc, priceInput, taxMode){
     salesperson: order.requestedByName || "", customerName: order.customerName || "",
     customerContact: order.customerContact || "", customerNote: order.customerNote || "",
     orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString(),
-    unitPrice: amounts.unitPrice, taxMode: taxMode||"none",
-    subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total
+    createdAt: new Date().toISOString()
   });
 }
 
@@ -579,27 +382,16 @@ function openEditKybOrderModal(orderId){
   const order = kybOrdersCache.find(o=>o.id===orderId);
   if(!order) return;
   let selectedItemId = order.itemId;
-  const initTaxMode = order.taxMode || "none";
-  const initPrice = initTaxMode === "included" ? (order.total!=null?order.total:0) : (order.unitPrice!=null?order.unitPrice:0);
   const html = `
     <div class="sheet-head"><h2>修改訂單</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row">
-      <label>搜尋車型（要換車型才需要，不換不用理它）</label>
+      <label>搜尋車型（要換車型才需要，不換不用理它；找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
       <input type="text" id="editKybOrderItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="editKybOrderItemList"></div>
     </div>
     <div class="form-row"><label>目前車型</label><input type="text" id="editKybOrderItemLabel" value="${escapeHtml(order.itemLabel||'')}" disabled></div>
     <div class="form-row"><label>選擇儲位</label><select id="editKybOrderLoc"></select></div>
     <div class="form-row"><label>數量</label><input type="number" id="editKybOrderQty" min="1" value="${order.qty}"></div>
-    <div class="form-row"><label>交易方式</label>
-      <select id="editKybOrderTaxMode">
-        <option value="none" ${initTaxMode==='none'?'selected':''}>不計稅</option>
-        <option value="included" ${initTaxMode==='included'?'selected':''}>稅內含</option>
-        <option value="excluded" ${initTaxMode==='excluded'?'selected':''}>稅外加</option>
-      </select>
-    </div>
-    <div class="form-row"><label id="editKybOrderPriceLabel">單價</label><input type="number" id="editKybOrderPrice" min="0" step="0.01" value="${initPrice}"></div>
-    <div class="count" id="editKybOrderPricePreview" style="color:#2451a3;"></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editKybOrderCustomerName" value="${escapeHtml(order.customerName||'')}"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="editKybOrderCustomerContact" value="${escapeHtml(order.customerContact||'')}"></div>
     <div class="form-row"><label>備註</label><input type="text" id="editKybOrderCustomerNote" value="${escapeHtml(order.customerNote||'')}"></div>
@@ -608,7 +400,6 @@ function openEditKybOrderModal(orderId){
       <button class="primary" id="editKybOrderSaveBtn">儲存</button>
     </div>`;
   openModal(html);
-  wirePriceCalc({ qty:"editKybOrderQty", taxMode:"editKybOrderTaxMode", price:"editKybOrderPrice", label:"editKybOrderPriceLabel", preview:"editKybOrderPricePreview" });
 
   let locOptions = [];
   function refreshEditLocOptions(){
@@ -642,8 +433,6 @@ function openEditKybOrderModal(orderId){
 
   document.getElementById("editKybOrderSaveBtn").addEventListener("click", async ()=>{
     const qty = Number(document.getElementById("editKybOrderQty").value);
-    const priceInput = Number(document.getElementById("editKybOrderPrice").value) || 0;
-    const taxMode = document.getElementById("editKybOrderTaxMode").value;
     const customerName = document.getElementById("editKybOrderCustomerName").value.trim();
     const customerContact = document.getElementById("editKybOrderCustomerContact").value.trim();
     const customerNote = document.getElementById("editKybOrderCustomerNote").value.trim();
@@ -652,11 +441,9 @@ function openEditKybOrderModal(orderId){
     const itemLabel = it ? `${it.carModel}（KYB）` : order.itemLabel;
     const locIdx = Number(document.getElementById("editKybOrderLoc").value);
     const locOpt = locOptions[locIdx];
-    const amounts = calcAmounts(qty, priceInput, taxMode);
     try{
       await db.collection("kybOrders").doc(orderId).update({
         itemId: selectedItemId, itemLabel, qty, customerName, customerContact, customerNote,
-        unitPrice: amounts.unitPrice, taxMode, subtotal: amounts.subtotal, taxAmount: amounts.taxAmount, total: amounts.total,
         loc: locOpt ? locOpt.code : null
       });
       closeModal();
@@ -673,43 +460,19 @@ function cancelKybOrder(orderId){
   }).catch(e=>alert("取消失敗："+e.message));
 }
 
-// 我的訂單：除了自己叫貨的 KYB 訂單之外，也合併顯示自己名下直接在進銷貨管理新增的銷貨紀錄（非叫貨流程）。
 function renderKybMyOrders(){
   const body = document.getElementById("kybMyOrdersBody");
   if(!body) return;
-  const orderRows = kybMyOrdersCache.map(o=>({
-    time: o.requestedAt || "",
-    itemLabel: o.itemLabel || "",
-    qty: o.qty,
-    unitPrice: o.unitPrice,
-    total: o.total,
-    customerName: o.customerName || "",
-    statusText: ({ pending:"待確認", confirmed:"已出貨", cancelled:"已取消" })[o.status] || o.status
-  }));
-  const salesRows = (kybMySalesTxnCache||[]).map(t=>{
-    const item = kybItemsCache.find(i=>i.id===t.itemId);
-    const label = item ? item.carModel : "(車型已刪除)";
-    return {
-      time: t.createdAt || t.date || "",
-      itemLabel: label,
-      qty: t.qty,
-      unitPrice: t.unitPrice,
-      total: t.total,
-      customerName: t.customerName || "",
-      statusText: t.type === "in" ? "進貨紀錄" : "銷貨紀錄"
-    };
-  });
-  const merged = orderRows.concat(salesRows).sort((a,b)=> (b.time||"").localeCompare(a.time||""));
-  document.getElementById("kybMyOrdersCount").textContent = `共 ${merged.length} 筆`;
-  body.innerHTML = merged.map(o=>`<tr>
-    <td>${escapeHtml((o.time||"").slice(0,16).replace("T"," "))}</td>
+  const sorted = kybMyOrdersCache.slice().sort((a,b)=> (b.requestedAt||"").localeCompare(a.requestedAt||""));
+  document.getElementById("kybMyOrdersCount").textContent = `共 ${sorted.length} 筆`;
+  const statusLabel = { pending:"待確認", confirmed:"已出貨", cancelled:"已取消" };
+  body.innerHTML = sorted.map(o=>`<tr>
+    <td>${escapeHtml(toTaipeiTimeStr(o.requestedAt))}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
     <td>${o.qty}</td>
-    <td>${o.unitPrice!=null?o.unitPrice:"-"}</td>
-    <td>${o.total!=null?o.total:"-"}</td>
     <td>${escapeHtml(o.customerName||"")}</td>
-    <td>${escapeHtml(o.statusText||"")}</td>
-  </tr>`).join("") || `<tr><td colspan="7" class="empty">尚無訂單紀錄</td></tr>`;
+    <td>${statusLabel[o.status]||o.status}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="empty">尚無訂單紀錄</td></tr>`;
 }
 
 document.getElementById("kybAddLocBtn").addEventListener("click", async ()=>{
