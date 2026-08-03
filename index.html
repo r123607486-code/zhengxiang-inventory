@@ -79,7 +79,7 @@
         <div class="toolbar">
           <input type="text" id="masterBox" placeholder="輸入規格、型號或品牌篩選">
           <button id="exportFilteredBtn">匯出目前結果(Excel)</button>
-          <button id="exportAllBtn">匯出完整備份(Excel)</button>
+          <button id="exportAllBtn">匯出完整交接備份(Excel)</button>
         </div>
         <div class="toolbar">
           <span style="font-size:13px;color:var(--muted);">顯示超過</span>
@@ -127,14 +127,23 @@
       </div>
     </section>
 
-    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨） -->
+    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨，並可查詢已出貨/已取消歷史） -->
     <section class="page" id="page-orders">
       <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="ordersStatusFilter">
+            <option value="pending">待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
         <div class="count" id="ordersCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="ordersBody"></tbody>
         </table>
       </div>
@@ -254,11 +263,20 @@
     <!-- KYB 訂單管理 -->
     <section class="page" id="page-kyb-orders">
       <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="kybOrdersStatusFilter">
+            <option value="pending">待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
         <div class="count" id="kybOrdersCount"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="kybOrdersBody"></tbody>
         </table>
       </div>
@@ -327,6 +345,7 @@
 <script src="locations-users.js"></script>
 <script src="data-import.js"></script>
 <script src="backup-restore.js"></script>
+<script src="handover-backup.js"></script>
 <script src="kyb-inventory.js"></script>
 <script src="kyb-transactions-orders.js"></script>
 </body>
