@@ -31,7 +31,6 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
     await restoreHandoverBackup(wb, statusEl);
     return;
   }
-
   if(wb.Sheets["品項主檔"] && wb.Sheets["儲位主檔"]){
     await restoreFullBackup(wb, statusEl);
     return;
@@ -53,7 +52,7 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
       const locs = {};
       if(zongQty > 0){ locs[zongCode] = {qty:zongQty, productionDate:yearRaw}; knownLocationCodes.add(zongCode); }
       if(pingQty > 0){ locs["屏東"] = {qty:pingQty, productionDate:yearRaw}; knownLocationCodes.add("屏東"); }
-      const costVal = r["成本(已套1.25)"];
+      const costVal = r["成本(已夗1.25)"];
       newItems.push({
         brand: r["品牌"] || "", model: r["型號"] || "", spec: r["規格"] || "",
         locations: locs, remark: r["備註"] || "",
