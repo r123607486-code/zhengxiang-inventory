@@ -64,6 +64,7 @@ function openKybTxnModal(){
     </div>
     <div class="form-row"><label>已選車型</label><input type="text" id="kybTxnItemLabel" disabled></div>
     <div class="form-row"><label>數量</label><input type="number" id="kybTxnQty" min="1"></div>
+    ${salespersonFieldHtml("kybTxnSalesperson", "")}
     <div class="form-row"><label>儲位</label>
       <select id="kybTxnLoc"><option value="">請先選擇車型</option></select>
     </div>
@@ -115,6 +116,8 @@ function openKybTxnModal(){
     const type = document.getElementById("kybTxnType").value;
     const qty = Number(document.getElementById("kybTxnQty").value);
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const salespersonEl = document.getElementById("kybTxnSalesperson");
+    const salesperson = salespersonEl ? salespersonEl.value.trim() : "";
 
     let loc;
     if(type === "out"){
@@ -127,11 +130,11 @@ function openKybTxnModal(){
       loc = document.getElementById("kybTxnLoc").value;
       if(!loc){ alert("請選擇儲位"); return; }
     }
-    submitKybTxn(selectedItemId, type, qty, loc);
+    submitKybTxn(selectedItemId, type, qty, loc, salesperson);
   });
 }
 
-async function submitKybTxn(itemId, type, qty, loc){
+async function submitKybTxn(itemId, type, qty, loc, salesperson){
   const itemRef = db.collection("kybItems").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -142,7 +145,8 @@ async function submitKybTxn(itemId, type, qty, loc){
   if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
   await itemRef.update({locations: allLocs});
   await db.collection("kybTransactions").add({
-    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name, editLog: [],
+    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
+    salesperson: salesperson || "", editLog: [],
     createdAt: new Date().toISOString()
   });
   closeModal();
@@ -165,7 +169,7 @@ function openEditKybTxnModal(txnId){
     <div class="form-row"><label>儲位</label>
       <select id="editKybTxnLoc">${kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
     </div>
-    <div class="form-row"><label>業務</label><input type="text" id="editKybTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
+    ${salespersonFieldHtml("editKybTxnSalesperson", t.salesperson||"")}
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editKybTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
@@ -470,7 +474,7 @@ function openEditKybOrderModal(orderId){
       });
       closeModal();
     }catch(e){
-      alert("儲存失敗："+e.message);
+      alert("儲存失敗：\"+e.message);
     }
   });
 }
