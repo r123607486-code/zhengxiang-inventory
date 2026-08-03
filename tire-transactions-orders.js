@@ -65,6 +65,7 @@ function openTxnModal(){
     </div>
     <div class="form-row"><label>已選品項</label><input type="text" id="txnItemLabel" disabled></div>
     <div class="form-row"><label>數量</label><input type="number" id="txnQty" min="1"></div>
+    ${salespersonFieldHtml("txnSalesperson", "")}
     <div class="form-row"><label>儲位</label>
       <select id="txnLoc"><option value="">請先選擇品項</option></select>
     </div>
@@ -126,6 +127,8 @@ function openTxnModal(){
     const type = document.getElementById("txnType").value;
     const qty = Number(document.getElementById("txnQty").value);
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const salespersonEl = document.getElementById("txnSalesperson");
+    const salesperson = salespersonEl ? salespersonEl.value.trim() : "";
 
     let loc, batchDate;
     if(type === "out"){
@@ -139,11 +142,11 @@ function openTxnModal(){
       if(!loc){ alert("請選擇儲位"); return; }
       batchDate = document.getElementById("txnProdDate").value.trim() || null;
     }
-    submitTxn(selectedItemId, type, qty, loc, batchDate);
+    submitTxn(selectedItemId, type, qty, loc, batchDate, salesperson);
   });
 }
 
-async function submitTxn(itemId, type, qty, loc, batchDate){
+async function submitTxn(itemId, type, qty, loc, batchDate, salesperson){
   const itemRef = db.collection("items").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -179,7 +182,8 @@ async function submitTxn(itemId, type, qty, loc, batchDate){
 
   await itemRef.update({locations: allLocs});
   await db.collection("transactions").add({
-    itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name, editLog: [],
+    itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name,
+    salesperson: salesperson || "", editLog: [],
     createdAt: new Date().toISOString()
   });
   closeModal();
@@ -203,7 +207,7 @@ function openEditTxnModal(txnId){
       <select id="editTxnLoc">${locationsCache.map(l=>`<option value="${escapeHtml(l.code)}" ${l.code===t.loc?'selected':''}>${escapeHtml(l.code)}</option>`).join("")}</select>
     </div>
     <div class="form-row"><label>生產日期（這批的4碼DOT代碼，留空表示不指定批次）</label><input type="text" id="editTxnBatchDate" value="${escapeHtml(t.batchDate||"")}" placeholder="例如 2523"></div>
-    <div class="form-row"><label>業務</label><input type="text" id="editTxnSalesperson" value="${escapeHtml(t.salesperson||"")}"></div>
+    ${salespersonFieldHtml("editTxnSalesperson", t.salesperson||"")}
     <div class="form-row"><label>客戶姓名</label><input type="text" id="editTxnCustomerName" value="${escapeHtml(t.customerName||"")}"></div>
     <div class="form-actions">
       <button onclick="closeModal()">取消</button>
