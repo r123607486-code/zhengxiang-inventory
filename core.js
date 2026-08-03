@@ -46,6 +46,10 @@ let kybListenersStarted = false;
 let queryVisibleCount = 200;
 let kybQueryVisibleCount = 200;
 
+// 目前所有活著的 Firestore onSnapshot 監聽器的取消訂閱函式。
+// 登出時會全部呼叫、清空，避免同一分頁換帳號登入時，殘留上一位使用者的監聽器與資料。
+let activeUnsubs = [];
+
 function norm(s){ return (s || "").toString().toUpperCase().replace(/\s+/g, ""); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 // 把儲存的 UTC 時間字串（new Date().toISOString()）轉成台灣時間（UTC+8）顯示用字串，格式同原本 "YYYY-MM-DD HH:MM"
@@ -166,10 +170,42 @@ function doLogin(){
 
 document.getElementById("logoutBtn").addEventListener("click", ()=> auth.signOut());
 
+// 登出、或偵測到跟目前 currentUser 不同的帳號登入時呼叫：
+// 取消所有 Firestore 監聽、重設「監聽器已啟動」旗標、清空所有畫面快取，
+// 避免同一個瀏覽器分頁換帳號登入時，殘留上一位使用者的資料或畫面。
+function resetSessionState(){
+  activeUnsubs.forEach(unsub=>{ try{ unsub(); }catch(e){} });
+  activeUnsubs = [];
+  usersListenerStarted = false;
+  tireListenersStarted = false;
+  kybListenersStarted = false;
+  currentCategory = null;
+  itemsCache = [];
+  locationsCache = [];
+  usersCache = [];
+  txnCache = [];
+  brandsCache = [];
+  ordersCache = [];
+  myOrdersCache = [];
+  kybItemsCache = [];
+  kybLocationsCache = [];
+  kybOrdersCache = [];
+  kybMyOrdersCache = [];
+  kybTxnCache = [];
+  queryVisibleCount = 200;
+  kybQueryVisibleCount = 200;
+  const backupBanner = document.getElementById("backupBanner");
+  if(backupBanner) backupBanner.classList.add("hidden");
+  const ordersBanner = document.getElementById("ordersBanner");
+  if(ordersBanner) ordersBanner.classList.add("hidden");
+}
+
 auth.onAuthStateChanged(async (user)=>{
   if(!user){
+    resetSessionState();
     document.getElementById("splash").classList.remove("hidden");
     document.getElementById("app").classList.add("hidden");
+    document.getElementById("categoryScreen").classList.add("hidden");
     currentUser = null;
     return;
   }
@@ -180,6 +216,11 @@ auth.onAuthStateChanged(async (user)=>{
     return;
   }
   const data = doc.data();
+  // 換了不同帳號登入（例如同分頁先前有另一位使用者登入過）：保險起見先重設一次狀態，
+  // 確保待會 startListeners() 一定會依「這位」使用者的角色重新訂閱正確的資料。
+  if(currentUser && currentUser.uid !== user.uid){
+    resetSessionState();
+  }
   currentUser = { uid: user.uid, name: data.name, username: data.username, role: data.role };
   document.getElementById("splash").classList.add("hidden");
   document.getElementById("whoLabel").textContent = `${currentUser.name}（${currentUser.role==='admin'?'管理者':'員工'}）`;
@@ -281,10 +322,10 @@ document.getElementById("dismissBanner").addEventListener("click", ()=>{
 function startListeners(){
   if(!usersListenerStarted && currentUser.role === "admin"){
     usersListenerStarted = true;
-    db.collection("users").onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("users").onSnapshot(snap=>{
       usersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderUsers();
-    });
+    }));
   }
   if(currentUser.role === "admin"){
     if(!tireListenersStarted){ tireListenersStarted = true; startTireListeners(); }
@@ -297,62 +338,62 @@ function startListeners(){
 }
 
 function startTireListeners(){
-  db.collection("items").onSnapshot(snap=>{
+  activeUnsubs.push(db.collection("items").onSnapshot(snap=>{
     itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderQuery(); renderMaster();
-  });
-  db.collection("locations").onSnapshot(snap=>{
+  }));
+  activeUnsubs.push(db.collection("locations").onSnapshot(snap=>{
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
-  });
+  }));
   if(currentUser.role === "admin"){
-    db.collection("transactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("transactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
       txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderTxns();
-    });
+    }));
     // 抓近期訂單（不限狀態），讓「訂單管理」可以查已出貨／已取消的歷史，不是只看待確認的。
-    db.collection("orders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("orders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderOrders();
       updateOrdersBadge();
-    });
+    }));
   } else {
-    db.collection("orders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("orders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
       myOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderMyOrders();
-    });
+    }));
   }
-  db.collection("brands").onSnapshot(snap=>{
+  activeUnsubs.push(db.collection("brands").onSnapshot(snap=>{
     brandsCache = snap.docs.map(d=>d.data().name);
     if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
-  }, ()=>{ brandsCache = DEFAULT_BRANDS.slice(); });
+  }, ()=>{ brandsCache = DEFAULT_BRANDS.slice(); }));
 }
 
 function startKybListeners(){
-  db.collection("kybItems").onSnapshot(snap=>{
+  activeUnsubs.push(db.collection("kybItems").onSnapshot(snap=>{
     kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybQuery(); renderKybMaster();
-  });
-  db.collection("kybLocations").onSnapshot(snap=>{
+  }));
+  activeUnsubs.push(db.collection("kybLocations").onSnapshot(snap=>{
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
-  });
+  }));
   if(currentUser.role === "admin"){
-    db.collection("kybTransactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("kybTransactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
       kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybTxns();
-    });
+    }));
     // 同輪胎一樣，抓近期全部KYB訂單（不限狀態），讓「訂單管理」可以查歷史。
-    db.collection("kybOrders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("kybOrders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybOrders();
       updateKybOrdersBadge();
-    });
+    }));
   } else {
-    db.collection("kybOrders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
+    activeUnsubs.push(db.collection("kybOrders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
       kybMyOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybMyOrders();
-    });
+    }));
   }
 }
 
@@ -393,4 +434,4 @@ function updateOrdersBannerCombined(){
   const otherN = otherCategory === "kyb" ? kybN : tireN;
   banner.dataset.targetCategory = otherN > 0 ? otherCategory : currentCategory;
   banner.classList.remove("hidden");
-}
+});
