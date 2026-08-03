@@ -1,37 +1,8 @@
 // ============================================================
-// 完整備份匯出／還原（輪胎＋KYB）
+// 舊格式完整備份還原（輪胎＋KYB）
+// 匯出「完整交接備份」已改由 handover-backup.js 的 exportFullBackup() 負責（綁在 exportAllBtn 上）。
+// 這裡只保留還原功能，讓舊版「完整備份_日期.xlsx」格式仍然可以匯入還原。
 // ============================================================
-document.getElementById("exportAllBtn").addEventListener("click", ()=>{
-  exportFullBackup();
-});
-
-async function exportFullBackup(){
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemsCache.map(it=>({
-    id:it.id, 品牌:it.brand, 型號:it.model, 規格:it.spec, 總量:totalQty(it),
-    儲位分布:locSummary(it), "20%":it.twenty!=null?it.twenty:"", 售價:it.sellPrice!=null?it.sellPrice:"", 備註:it.remark||""
-  }))), "品項主檔");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(locationsCache.map(l=>({儲位代碼:l.code}))), "儲位主檔");
-  const txnSnap = await db.collection("transactions").get();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txnSnap.docs.map(d=>d.data())), "進出貨紀錄");
-
-  const kybItemsSnap = await db.collection("kybItems").get();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kybItemsSnap.docs.map(d=>{
-    const it = {id:d.id, ...d.data()};
-    return {
-      id: it.id, 車型: it.carModel, 廠牌: it.carMake||"", 避震款式: it.bucketType||"", 總量: kybTotalQty(it),
-      儲位分布: kybLocSummary(it), 年份代碼: it.yearCode||"", 料號: it.partNo||"",
-      保修廠價: it.warrantyPrice!=null?it.warrantyPrice:"", 一線消費者售價: it.catalogPrice!=null?it.catalogPrice:"",
-      備註: it.remark||""
-    };
-  })), "KYB品項主檔");
-  const kybLocSnap = await db.collection("kybLocations").get();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kybLocSnap.docs.map(d=>({儲位代碼:d.data().code}))), "KYB儲位主檔");
-  const kybTxnSnap = await db.collection("kybTransactions").get();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kybTxnSnap.docs.map(d=>d.data())), "KYB進出貨紀錄");
-
-  XLSX.writeFile(wb, `完整備份_${todayStr()}.xlsx`);
-}
 
 async function restoreFullBackup(wb, statusEl){
   const hasKybSheets = !!(wb.Sheets["KYB品項主檔"] || wb.Sheets["KYB儲位主檔"] || wb.Sheets["KYB進出貨紀錄"]);
