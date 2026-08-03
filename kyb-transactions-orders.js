@@ -474,7 +474,7 @@ function openEditKybOrderModal(orderId){
       });
       closeModal();
     }catch(e){
-      alert("儲存失敗：\"+e.message);
+      alert("儲存失敗："+e.message);
     }
   });
 }
