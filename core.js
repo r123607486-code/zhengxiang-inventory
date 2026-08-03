@@ -434,4 +434,4 @@ function updateOrdersBannerCombined(){
   const otherN = otherCategory === "kyb" ? kybN : tireN;
   banner.dataset.targetCategory = otherN > 0 ? otherCategory : currentCategory;
   banner.classList.remove("hidden");
-});
+}
