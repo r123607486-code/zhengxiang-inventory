@@ -228,7 +228,7 @@ async function saveEditKybTxn(t, next){
 async function deleteKybTxn(txnId){
   const t = kybTxnCache.find(x=>x.id===txnId);
   if(!t) return;
-  if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去）")) return;
+  if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
   const itemRef = db.collection("kybItems").doc(t.itemId);
   const itemSnap = await itemRef.get();
   if(itemSnap.exists){
@@ -239,6 +239,9 @@ async function deleteKybTxn(txnId){
     if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
     await itemRef.update({locations: allLocs});
   }
+  await db.collection("editLogs").add({
+    txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+  });
   await db.collection("kybTransactions").doc(txnId).delete();
 }
 
@@ -278,12 +281,29 @@ function openNewKybItemModal(){
   });
 }
 
+const KYB_ORDER_STATUS_LABELS = { pending:"待確認", confirmed:"已出貨", cancelled:"已取消" };
+
+const kybOrdersStatusFilterEl = document.getElementById("kybOrdersStatusFilter");
+if(kybOrdersStatusFilterEl) kybOrdersStatusFilterEl.addEventListener("change", renderKybOrders);
+
 function renderKybOrders(){
   const body = document.getElementById("kybOrdersBody");
   if(!body) return;
-  document.getElementById("kybOrdersCount").textContent = `共 ${kybOrdersCache.length} 筆待確認`;
-  const sorted = kybOrdersCache.slice().sort((a,b)=> (a.requestedAt||"").localeCompare(b.requestedAt||""));
-  body.innerHTML = sorted.map(o=>`<tr>
+  const filterEl = document.getElementById("kybOrdersStatusFilter");
+  const filter = filterEl ? filterEl.value : "pending";
+  let list = kybOrdersCache.slice();
+  if(filter !== "all") list = list.filter(o=> o.status === filter);
+  const isPendingView = filter === "pending";
+  document.getElementById("kybOrdersCount").textContent = isPendingView ? `共 ${list.length} 筆待確認` : `共 ${list.length} 筆`;
+  const sorted = list.sort((a,b)=> isPendingView
+    ? (a.requestedAt||"").localeCompare(b.requestedAt||"")
+    : (b.requestedAt||"").localeCompare(a.requestedAt||""));
+  body.innerHTML = sorted.map(o=>{
+    const historyNote = [
+      o.confirmedAt ? `出貨於 ${escapeHtml(toTaipeiTimeStr(o.confirmedAt))}${o.confirmedBy?`（${escapeHtml(o.confirmedBy)}）`:""}` : "",
+      o.cancelledAt ? `取消於 ${escapeHtml(toTaipeiTimeStr(o.cancelledAt))}${o.cancelledBy?`（${escapeHtml(o.cancelledBy)}）`:""}` : ""
+    ].filter(Boolean).join("　");
+    return `<tr>
     <td>${escapeHtml(toTaipeiTimeStr(o.requestedAt))}</td>
     <td>${escapeHtml(o.requestedByName||"")}</td>
     <td>${escapeHtml(o.itemLabel||"")}</td>
@@ -292,12 +312,14 @@ function renderKybOrders(){
     <td>${escapeHtml(o.customerName||"")}</td>
     <td>${escapeHtml(o.customerContact||"")}</td>
     <td>${escapeHtml(o.customerNote||"")}</td>
-    <td>
+    <td>${KYB_ORDER_STATUS_LABELS[o.status] || o.status || "-"}</td>
+    <td>${o.status === "pending" ? `
       <button data-confirm="${o.id}">確認</button>
       <button data-edit="${o.id}">修改</button>
       <button data-cancel="${o.id}">取消</button>
-    </td>
-  </tr>`).join("") || `<tr><td colspan="9" class="empty">目前沒有待確認訂單</td></tr>`;
+    ` : `<span class="empty-inline">${historyNote}</span>`}</td>
+  </tr>`;
+  }).join("") || `<tr><td colspan="10" class="empty">目前沒有符合條件的訂單</td></tr>`;
 
   body.querySelectorAll("[data-confirm]").forEach(b=>b.addEventListener("click", ()=> openConfirmKybOrderModal(b.dataset.confirm)));
   body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=> openEditKybOrderModal(b.dataset.edit)));
