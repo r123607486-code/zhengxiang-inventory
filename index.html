@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>正享有限公司庫存管理系統</title>
 <link rel="stylesheet" href="style.css?v=20260803">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#8f1d2c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="庫存系統">
+<link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
 
@@ -348,5 +354,12 @@
 <script src="handover-backup.js"></script>
 <script src="kyb-inventory.js?v=20260803"></script>
 <script src="kyb-transactions-orders.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  });
+}
+</script>
 </body>
 </html>
