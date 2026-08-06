@@ -224,6 +224,17 @@ function resetSessionState(){
   }
 }
 
+// 管理者專用：跟系統要「允許通知」的權限。
+// iOS 規定：就算完全不送推播訊息，只是想在 App 圖示顯示角標數字，也一定要先取得通知權限，
+// 不然 navigator.setAppBadge() 呼叫了也不會顯示任何東西。只會跳一次系統詢問視窗，使用者選過後不會再問。
+function requestNotificationPermissionForAdmin(){
+  if(!currentUser || currentUser.role !== "admin") return;
+  if(!("Notification" in window)) return;
+  if(Notification.permission === "default"){
+    Notification.requestPermission().catch(()=>{});
+  }
+}
+
 auth.onAuthStateChanged(async (user)=>{
   if(!user){
     resetSessionState();
@@ -248,6 +259,7 @@ auth.onAuthStateChanged(async (user)=>{
   currentUser = { uid: user.uid, name: data.name, username: data.username, role: data.role };
   document.getElementById("splash").classList.add("hidden");
   document.getElementById("whoLabel").textContent = `${currentUser.name}（${currentUser.role==='admin'?'管理者':'員工'}）`;
+  requestNotificationPermissionForAdmin();
   showCategoryScreen();
 });
 
