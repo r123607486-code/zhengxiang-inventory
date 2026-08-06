@@ -218,6 +218,10 @@ function resetSessionState(){
   if(backupBanner) backupBanner.classList.add("hidden");
   const ordersBanner = document.getElementById("ordersBanner");
   if(ordersBanner) ordersBanner.classList.add("hidden");
+  // 登出時順便清掉 App 圖示角標，避免下一個人登入前殘留數字。
+  if("clearAppBadge" in navigator){
+    navigator.clearAppBadge().catch(()=>{});
+  }
 }
 
 auth.onAuthStateChanged(async (user)=>{
@@ -439,12 +443,27 @@ function updateKybOrdersBadge(){
   updateOrdersBannerCombined();
 }
 
+// 管理者專用：把「輪胎＋KYB 待確認訂單」加總後同步到手機主畫面 App 圖示的角標數字（簡化版）。
+// 只有目前登入者是管理者才會設定，且僅在瀏覽器/裝置支援 Badging API 時生效（iOS 16.4+、Android Chrome 等）。
+// 這個角標只在 App 已開啟過、仍在背景執行時才會更新，App 完全關閉時不會主動推播更新（要做到那個要串推播通知，屬於完整版功能）。
+function updateAppBadgeForAdmin(tireN, kybN){
+  if(!currentUser || currentUser.role !== "admin") return;
+  if(!("setAppBadge" in navigator)) return;
+  const total = tireN + kybN;
+  if(total > 0){
+    navigator.setAppBadge(total).catch(()=>{});
+  } else if("clearAppBadge" in navigator){
+    navigator.clearAppBadge().catch(()=>{});
+  }
+}
+
 function updateOrdersBannerCombined(){
   const banner = document.getElementById("ordersBanner");
   const bannerText = document.getElementById("ordersBannerText");
-  if(!banner || !bannerText) return;
   const tireN = ordersCache.filter(o=>o.status==="pending").length;
   const kybN = kybOrdersCache.filter(o=>o.status==="pending").length;
+  updateAppBadgeForAdmin(tireN, kybN);
+  if(!banner || !bannerText) return;
   if(tireN === 0 && kybN === 0){ banner.classList.add("hidden"); return; }
   const parts = [];
   if(tireN > 0) parts.push(`輪胎 ${tireN} 筆`);
