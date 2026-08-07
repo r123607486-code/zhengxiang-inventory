@@ -154,6 +154,17 @@ function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
 }
 
+// ---- 進銷貨／庫存校正 共用邏輯：type 可能是 "in"（進貨）、"out"（銷貨）、"adjust"（庫存校正）----
+// txnSign：這筆紀錄「套用」時對庫存的正負號；還原（編輯或刪除）時取相反數 -txnSign(t)。
+function txnSign(t){
+  if(t.type === "adjust") return t.adjustSign === "-" ? -1 : 1;
+  return t.type === "in" ? 1 : -1;
+}
+function txnTypeLabel(t){
+  if(t.type === "adjust") return t.adjustSign === "-" ? "庫存校正（調降）" : "庫存校正（調升）";
+  return t.type === "in" ? "進貨" : "銷貨";
+}
+
 // 業務欄位共用元件（輪胎／KYB 共用）：
 // 管理者：顯示下拉選單，選項來自「使用者管理」裡啟用中的員工＋管理者；
 //         如果原本存的值不在目前使用者清單裡（例如已離職員工），會多加一個選項顯示原值並預選它，不會被無聲蓋掉。
@@ -294,7 +305,7 @@ const TIRE_TAB_DEFS = [
   {id:"query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
   {id:"myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
   {id:"master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin"]},
+  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
   {id:"orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
   {id:"loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
   {id:"import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
@@ -304,7 +315,7 @@ const KYB_TAB_DEFS = [
   {id:"kyb-query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
   {id:"kyb-myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
   {id:"kyb-master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin"]},
+  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
   {id:"kyb-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
   {id:"kyb-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
   {id:"kyb-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
@@ -355,13 +366,36 @@ document.getElementById("dismissBanner").addEventListener("click", ()=>{
   sessionStorage.setItem("backupBannerDismissed_" + todayStr(), "1");
 });
 
+// 建立一個「會自動重連」的 Firestore 即時監聽：
+// 網路斷線或 Firestore 暫時出錯時，onSnapshot 會被中止，這裡會每 3 秒重新訂閱一次，
+// 使用者不需要手動重新整理頁面。同時把取消訂閱函式登記到 activeUnsubs，
+// 讓登出／換帳號時 resetSessionState() 可以確實停掉監聽與重試，不會殘留上一位使用者的資料。
+function startRealtimeListener(makeQuery, onData, label){
+  let unsub = null;
+  let retryTimer = null;
+  let stopped = false;
+  const subscribe = ()=>{
+    if(stopped) return;
+    unsub = makeQuery().onSnapshot(onData, error=>{
+      console.error("[" + label + "] 即時同步中斷，3 秒後自動重試：", error);
+      retryTimer = window.setTimeout(subscribe, 3000);
+    });
+  };
+  subscribe();
+  activeUnsubs.push(()=>{
+    stopped = true;
+    if(retryTimer){ window.clearTimeout(retryTimer); retryTimer = null; }
+    if(unsub){ try{ unsub(); }catch(e){} }
+  });
+}
+
 function startListeners(){
   if(!usersListenerStarted && currentUser.role === "admin"){
     usersListenerStarted = true;
-    activeUnsubs.push(db.collection("users").onSnapshot(snap=>{
+    startRealtimeListener(()=>db.collection("users"), snap=>{
       usersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderUsers();
-    }));
+    }, "使用者");
   }
   if(currentUser.role === "admin"){
     if(!tireListenersStarted){ tireListenersStarted = true; startTireListeners(); }
@@ -374,31 +408,45 @@ function startListeners(){
 }
 
 function startTireListeners(){
-  activeUnsubs.push(db.collection("items").onSnapshot(snap=>{
+  startRealtimeListener(()=>db.collection("items"), snap=>{
     itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderQuery(); renderMaster();
-  }));
-  activeUnsubs.push(db.collection("locations").onSnapshot(snap=>{
+  }, "輪胎品項");
+  startRealtimeListener(()=>db.collection("locations"), snap=>{
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
-  }));
+  }, "輪胎儲位");
+  // 進銷貨管理分頁管理者與員工都看得到，因此交易紀錄不分角色都要訂閱。
+  startRealtimeListener(()=>db.collection("transactions").orderBy("date","desc").limit(200), snap=>{
+    txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderTxns();
+  }, "輪胎進銷貨");
   if(currentUser.role === "admin"){
-    activeUnsubs.push(db.collection("transactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
-      txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      renderTxns();
-    }));
     // 抓近期訂單（不限狀態），讓「訂單管理」可以查已出貨／已取消的歷史，不是只看待確認的。
-    activeUnsubs.push(db.collection("orders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    startRealtimeListener(()=>db.collection("orders").orderBy("requestedAt","desc").limit(300), snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderOrders();
       updateOrdersBadge();
-    }));
+    }, "輪胎訂單");
   } else {
-    activeUnsubs.push(db.collection("orders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
-      myOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    // 員工的「我的訂單」同時用「帳號 ID」與「姓名」兩種方式比對後合併，
+    // 避免早期只記姓名沒記帳號 ID 的舊訂單，員工本人反而看不到。
+    let myOrdersByUid = [], myOrdersByName = [];
+    const refreshMyOrders = ()=>{
+      const merged = new Map([...myOrdersByName, ...myOrdersByUid].map(o=>[o.id, o]));
+      myOrdersCache = [...merged.values()];
       renderMyOrders();
-    }));
+    };
+    startRealtimeListener(()=>db.collection("orders").where("requestedByUid","==",currentUser.uid), snap=>{
+      myOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyOrders();
+    }, "我的輪胎訂單（帳號）");
+    startRealtimeListener(()=>db.collection("orders").where("requestedByName","==",currentUser.name), snap=>{
+      myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyOrders();
+    }, "我的輪胎訂單（姓名）");
   }
+  // 品牌清單維持原本寫法：讀取失敗時直接退回內建預設品牌，不重試，避免新增品項時沒有品牌可選。
   activeUnsubs.push(db.collection("brands").onSnapshot(snap=>{
     brandsCache = snap.docs.map(d=>d.data().name);
     if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
@@ -406,30 +454,41 @@ function startTireListeners(){
 }
 
 function startKybListeners(){
-  activeUnsubs.push(db.collection("kybItems").onSnapshot(snap=>{
+  startRealtimeListener(()=>db.collection("kybItems"), snap=>{
     kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybQuery(); renderKybMaster();
-  }));
-  activeUnsubs.push(db.collection("kybLocations").onSnapshot(snap=>{
+  }, "KYB品項");
+  startRealtimeListener(()=>db.collection("kybLocations"), snap=>{
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
-  }));
+  }, "KYB儲位");
+  // 同輪胎：進銷貨管理分頁員工也看得到，交易紀錄不分角色都要訂閱。
+  startRealtimeListener(()=>db.collection("kybTransactions").orderBy("date","desc").limit(200), snap=>{
+    kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderKybTxns();
+  }, "KYB進銷貨");
   if(currentUser.role === "admin"){
-    activeUnsubs.push(db.collection("kybTransactions").orderBy("date","desc").limit(200).onSnapshot(snap=>{
-      kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      renderKybTxns();
-    }));
     // 同輪胎一樣，抓近期全部KYB訂單（不限狀態），讓「訂單管理」可以查歷史。
-    activeUnsubs.push(db.collection("kybOrders").orderBy("requestedAt","desc").limit(300).onSnapshot(snap=>{
+    startRealtimeListener(()=>db.collection("kybOrders").orderBy("requestedAt","desc").limit(300), snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybOrders();
       updateKybOrdersBadge();
-    }));
+    }, "KYB訂單");
   } else {
-    activeUnsubs.push(db.collection("kybOrders").where("requestedByUid","==",currentUser.uid).onSnapshot(snap=>{
-      kybMyOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    let myKybOrdersByUid = [], myKybOrdersByName = [];
+    const refreshMyKybOrders = ()=>{
+      const merged = new Map([...myKybOrdersByName, ...myKybOrdersByUid].map(o=>[o.id, o]));
+      kybMyOrdersCache = [...merged.values()];
       renderKybMyOrders();
-    }));
+    };
+    startRealtimeListener(()=>db.collection("kybOrders").where("requestedByUid","==",currentUser.uid), snap=>{
+      myKybOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyKybOrders();
+    }, "我的KYB訂單（帳號）");
+    startRealtimeListener(()=>db.collection("kybOrders").where("requestedByName","==",currentUser.name), snap=>{
+      myKybOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyKybOrders();
+    }, "我的KYB訂單（姓名）");
   }
 }
 
