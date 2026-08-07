@@ -1,7 +1,8 @@
 // ============================================================
-// 輪胎：進銷貨管理 / 訂單管理 / 我的訂單
+// 輪胎：進銷貨管理 / 庫存校正 / 訂單管理 / 我的訂單
 // ============================================================
 document.getElementById("newTxnBtn").addEventListener("click", openTxnModal);
+document.getElementById("newAdjustBtn").addEventListener("click", openAdjustTxnModal);
 document.getElementById("newItemBtn").addEventListener("click", openNewItemModal);
 
 document.getElementById("txnFilterFrom").addEventListener("change", renderTxns);
@@ -38,7 +39,7 @@ function renderTxns(){
     const label = item ? `${item.brand} ${item.spec}` : "(品項已刪除)";
     return `<tr>
       <td>${escapeHtml(t.date)}</td>
-      <td>${t.type==='in'?'進貨':'銷貨'}</td>
+      <td>${txnTypeLabel(t)}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
@@ -189,7 +190,157 @@ async function submitTxn(itemId, type, qty, loc, batchDate, salesperson){
   closeModal();
 }
 
-// 編輯進銷貨紀錄：日期、數量、儲位、業務、客戶姓名都可以改。
+// 庫存校正：用於盤點差異、破損報廢、輸入錯誤等情形下直接調整庫存，
+// 與進貨／銷貨屬於不同的紀錄類型（type="adjust"），不會被算入銷貨業績。
+function openAdjustTxnModal(){
+  const html = `
+    <div class="sheet-head"><h2>庫存校正</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>方向</label>
+      <select id="adjustSign"><option value="+">調正（增加庫存）</option><option value="-">調負（減少庫存）</option></select>
+    </div>
+    <div class="form-row">
+      <label>搜尋品項（輸入規格或型號）</label>
+      <input type="text" id="adjustItemSearch" placeholder="例如 205/60">
+      <div class="autocomplete-list hidden" id="adjustItemList"></div>
+    </div>
+    <div class="form-row"><label>已選品項</label><input type="text" id="adjustItemLabel" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="adjustQty" min="1"></div>
+    <div class="form-row"><label>儲位</label>
+      <select id="adjustLoc"><option value="">請先選擇品項</option></select>
+    </div>
+    <div class="form-row" id="adjustProdDateRow"><label>生產日期（選填，調正時可填這批的4碼DOT代碼）</label><input type="text" id="adjustProdDate" placeholder="例如 2523"></div>
+    <div class="form-row"><label>校正原因</label>
+      <select id="adjustReason">
+        <option value="盤點差異">盤點差異</option>
+        <option value="破損報廢">破損報廢</option>
+        <option value="輸入錯誤">輸入錯誤</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="adjustSubmitBtn">確認送出</button>
+    </div>`;
+  openModal(html);
+  let selectedItemId = null;
+
+  function refreshLocOptions(){
+    const sign = document.getElementById("adjustSign").value;
+    const locSelect = document.getElementById("adjustLoc");
+    const it = itemsCache.find(i=>i.id===selectedItemId);
+    const prodDateRow = document.getElementById("adjustProdDateRow");
+    if(sign === "-"){
+      prodDateRow.classList.add("hidden");
+      document.getElementById("adjustProdDate").value = "";
+    } else {
+      prodDateRow.classList.remove("hidden");
+    }
+    if(!it){ locSelect.innerHTML = `<option value="">請先選擇品項</option>`; window._adjustOutOptions = []; return; }
+    if(sign === "-"){
+      const options = locDetailList(it);
+      window._adjustOutOptions = options;
+      if(options.length === 0){
+        locSelect.innerHTML = `<option value="">這個品項目前沒有庫存可以調負</option>`;
+      } else {
+        locSelect.innerHTML = options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}${o.date?`（${escapeHtml(o.date)}）`:''}（目前${o.qty}）</option>`).join("");
+      }
+    } else {
+      window._adjustOutOptions = [];
+      locSelect.innerHTML = locationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
+    }
+  }
+  document.getElementById("adjustSign").addEventListener("change", refreshLocOptions);
+
+  const searchInput = document.getElementById("adjustItemSearch");
+  searchInput.addEventListener("input", ()=>{
+    const q = norm(searchInput.value);
+    const listEl = document.getElementById("adjustItemList");
+    if(!q){ listEl.classList.add("hidden"); return; }
+    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
+    listEl.classList.toggle("hidden", matches.length===0);
+    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
+      selectedItemId = d.dataset.id;
+      const it = itemsCache.find(i=>i.id===selectedItemId);
+      document.getElementById("adjustItemLabel").value = `${it.brand} ${it.spec}（${it.model||""}）`;
+      listEl.classList.add("hidden");
+      searchInput.value = "";
+      refreshLocOptions();
+    }));
+  });
+
+  document.getElementById("adjustSubmitBtn").addEventListener("click", async ()=>{
+    if(!selectedItemId){ alert("請先搜尋並選擇一個品項"); return; }
+    const sign = document.getElementById("adjustSign").value;
+    const qty = Number(document.getElementById("adjustQty").value);
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const reason = document.getElementById("adjustReason").value;
+
+    let loc, batchDate;
+    if(sign === "-"){
+      const idx = Number(document.getElementById("adjustLoc").value);
+      const opt = (window._adjustOutOptions||[])[idx];
+      if(!opt){ alert("請選擇要調負的儲位（如果同一個儲位有多批不同生產日期，請選對批次）"); return; }
+      loc = opt.code; batchDate = opt.date;
+      if(qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不能調負 ${qty} 條`); return; }
+    } else {
+      loc = document.getElementById("adjustLoc").value;
+      if(!loc){ alert("請選擇儲位"); return; }
+      batchDate = document.getElementById("adjustProdDate").value.trim() || null;
+    }
+    try{
+      await submitAdjustTxn(selectedItemId, sign, qty, loc, batchDate, reason);
+    }catch(e){
+      console.error("輪胎庫存校正送出失敗：", e);
+      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
+    }
+  });
+}
+
+async function submitAdjustTxn(itemId, adjustSign, qty, loc, batchDate, reason){
+  const itemRef = db.collection("items").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+  let usedDate = null;
+
+  if(adjustSign === "+"){
+    const enteredDate = (batchDate||"").toString().trim() || null;
+    if(enteredDate){
+      const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
+      usedDate = enteredDate;
+    } else if(batches.length === 1){
+      batches[0].qty += qty;
+      usedDate = batches[0].productionDate || null;
+    } else {
+      const idx = batches.findIndex(b=> !b.productionDate);
+      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
+      usedDate = null;
+    }
+  } else {
+    const targetDate = batchDate || null;
+    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+    if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
+    batches[idx].qty -= qty;
+    if(batches[idx].qty <= 0) batches.splice(idx, 1);
+    usedDate = targetDate;
+  }
+
+  allLocs[loc] = batches.filter(b=>b.qty>0);
+  if(allLocs[loc].length === 0) delete allLocs[loc];
+
+  await itemRef.update({locations: allLocs});
+  await db.collection("transactions").add({
+    itemId, type: "adjust", adjustSign, qty, loc, batchDate: usedDate, date: todayStr(),
+    operator: currentUser.name, reason, editLog: [],
+    createdAt: new Date().toISOString()
+  });
+  closeModal();
+}
+
+// 編輯進銷貨／庫存校正紀錄：日期、數量、儲位、業務、客戶姓名都可以改，類型不能改。
 // 儲位一定要從現有儲位清單選（不能自己打字），生產日期批次維持原本可填可留空的方式。
 // 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
 function openEditTxnModal(txnId){
@@ -200,7 +351,7 @@ function openEditTxnModal(txnId){
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>品項</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
-    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${txnTypeLabel(t)}" disabled></div>
     <div class="form-row"><label>日期</label><input type="date" id="editTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
     <div class="form-row"><label>數量</label><input type="number" id="editTxnQty" min="1" value="${t.qty}"></div>
     <div class="form-row"><label>儲位</label>
@@ -240,28 +391,28 @@ async function saveEditTxn(t, next){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
     let oldBatches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
     let oldIdx = oldBatches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null));
     if(oldIdx < 0){ oldBatches.push({ qty: 0, productionDate: t.batchDate||null }); oldIdx = oldBatches.length-1; }
-    const oldSign = t.type === "in" ? -1 : 1;
+    const oldSign = -txnSign(t);
     oldBatches[oldIdx].qty = (oldBatches[oldIdx].qty||0) + t.qty*oldSign;
     if(oldBatches[oldIdx].qty <= 0) oldBatches.splice(oldIdx, 1);
     allLocs[t.loc] = oldBatches.filter(b=>b.qty>0);
     if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
 
-    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
+    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位／日期）
     let newBatches = normalizeBatches(allLocs[next.loc], item).map(b=>({...b}));
     let newIdx = newBatches.findIndex(b=> (b.productionDate||null) === (next.batchDate||null));
     if(newIdx < 0){
-      if(t.type === "out"){ throw new Error("這個儲位／批次目前沒有庫存，無法把銷貨紀錄改到這裡，請確認儲位或生產日期"); }
+      if(txnSign(t) < 0){ throw new Error("這個儲位／批次目前沒有庫存，無法把這筆紀錄改到這裡，請確認儲位或生產日期"); }
       newBatches.push({ qty: 0, productionDate: next.batchDate||null });
       newIdx = newBatches.length-1;
     }
-    const newSign = t.type === "in" ? 1 : -1;
+    const newSign = txnSign(t);
     const resultQty = (newBatches[newIdx].qty||0) + next.qty*newSign;
-    if(t.type === "out" && resultQty < 0){
-      throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成銷貨 ${next.qty} 條`);
+    if(newSign < 0 && resultQty < 0){
+      throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成 ${next.qty} 條`);
     }
     newBatches[newIdx].qty = resultQty;
     if(newBatches[newIdx].qty <= 0) newBatches.splice(newIdx, 1);
@@ -295,7 +446,7 @@ async function deleteTxn(txnId){
     let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
     if(idx < 0) idx = 0;
     if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
-    const sign = t.type === "in" ? -1 : 1;
+    const sign = -txnSign(t);
     batches[idx].qty = (batches[idx].qty||0) + t.qty*sign;
     if(batches[idx].qty <= 0) batches.splice(idx, 1);
     allLocs[t.loc] = batches.filter(b=>b.qty>0);
