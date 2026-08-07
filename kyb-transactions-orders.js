@@ -1,7 +1,8 @@
 // ============================================================
-// KYB：進銷貨管理 / 訂單管理 / 我的訂單 / 儲位管理
+// KYB：進銷貨管理 / 庫存校正 / 訂單管理 / 我的訂單 / 儲位管理
 // ============================================================
 document.getElementById("kybNewTxnBtn").addEventListener("click", openKybTxnModal);
+document.getElementById("kybNewAdjustBtn").addEventListener("click", openKybAdjustTxnModal);
 document.getElementById("kybNewItemBtn").addEventListener("click", openNewKybItemModal);
 document.getElementById("kybTxnFilterFrom").addEventListener("change", renderKybTxns);
 document.getElementById("kybTxnFilterTo").addEventListener("change", renderKybTxns);
@@ -37,7 +38,7 @@ function renderKybTxns(){
     const label = item ? item.carModel : "(車型已刪除)";
     return `<tr>
       <td>${escapeHtml(t.date)}</td>
-      <td>${t.type==='in'?'進貨':'銷貨'}</td>
+      <td>${txnTypeLabel(t)}</td>
       <td>${escapeHtml(label)}</td>
       <td>${t.qty}</td>
       <td>${escapeHtml(t.salesperson||"")}</td>
@@ -152,7 +153,121 @@ async function submitKybTxn(itemId, type, qty, loc, salesperson){
   closeModal();
 }
 
-// 編輯進銷貨紀錄：日期、數量、儲位、業務、客戶姓名都可以改。
+// 庫存校正：用於盤點差異、破損報廢、輸入錯誤等情形下直接調整庫存，
+// 與進貨／銷貨屬於不同的紀錄類型（type="adjust"），不會被算入銷貨業績。
+function openKybAdjustTxnModal(){
+  const html = `
+    <div class="sheet-head"><h2>庫存校正</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="form-row"><label>方向</label>
+      <select id="kybAdjustSign"><option value="+">調正（增加庫存）</option><option value="-">調負（減少庫存）</option></select>
+    </div>
+    <div class="form-row">
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
+      <input type="text" id="kybAdjustItemSearch" placeholder="例如 Altis">
+      <div class="autocomplete-list hidden" id="kybAdjustItemList"></div>
+    </div>
+    <div class="form-row"><label>已選車型</label><input type="text" id="kybAdjustItemLabel" disabled></div>
+    <div class="form-row"><label>數量</label><input type="number" id="kybAdjustQty" min="1"></div>
+    <div class="form-row"><label>儲位</label>
+      <select id="kybAdjustLoc"><option value="">請先選擇車型</option></select>
+    </div>
+    <div class="form-row"><label>校正原因</label>
+      <select id="kybAdjustReason">
+        <option value="盤點差異">盤點差異</option>
+        <option value="破損報廢">破損報廢</option>
+        <option value="輸入錯誤">輸入錯誤</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button onclick="closeModal()">取消</button>
+      <button class="primary" id="kybAdjustSubmitBtn">確認送出</button>
+    </div>`;
+  openModal(html);
+  let selectedItemId = null;
+
+  function refreshLocOptions(){
+    const sign = document.getElementById("kybAdjustSign").value;
+    const locSelect = document.getElementById("kybAdjustLoc");
+    const it = kybItemsCache.find(i=>i.id===selectedItemId);
+    if(!it){ locSelect.innerHTML = `<option value="">請先選擇車型</option>`; window._kybAdjustOutOptions = []; return; }
+    if(sign === "-"){
+      const options = kybLocList(it);
+      window._kybAdjustOutOptions = options;
+      locSelect.innerHTML = options.length
+        ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("")
+        : `<option value="">這個車型目前沒有庫存可以調負</option>`;
+    } else {
+      window._kybAdjustOutOptions = [];
+      locSelect.innerHTML = kybLocationsCache.map(l=>`<option value="${escapeHtml(l.code)}">${escapeHtml(l.code)}</option>`).join("");
+    }
+  }
+  document.getElementById("kybAdjustSign").addEventListener("change", refreshLocOptions);
+
+  const searchInput = document.getElementById("kybAdjustItemSearch");
+  searchInput.addEventListener("input", ()=>{
+    const q = norm(searchInput.value);
+    const listEl = document.getElementById("kybAdjustItemList");
+    if(!q){ listEl.classList.add("hidden"); return; }
+    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
+    listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
+    listEl.classList.toggle("hidden", matches.length===0);
+    listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
+      selectedItemId = d.dataset.id;
+      const it = kybItemsCache.find(i=>i.id===selectedItemId);
+      document.getElementById("kybAdjustItemLabel").value = kybItemLabel(it);
+      listEl.classList.add("hidden");
+      searchInput.value = "";
+      refreshLocOptions();
+    }));
+  });
+
+  document.getElementById("kybAdjustSubmitBtn").addEventListener("click", async ()=>{
+    if(!selectedItemId){ alert("請先搜尋並選擇一個車型"); return; }
+    const sign = document.getElementById("kybAdjustSign").value;
+    const qty = Number(document.getElementById("kybAdjustQty").value);
+    if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
+    const reason = document.getElementById("kybAdjustReason").value;
+
+    let loc;
+    if(sign === "-"){
+      const idx = Number(document.getElementById("kybAdjustLoc").value);
+      const opt = (window._kybAdjustOutOptions||[])[idx];
+      if(!opt){ alert("請選擇要調負的儲位"); return; }
+      loc = opt.code;
+      if(qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不能調負 ${qty}`); return; }
+    } else {
+      loc = document.getElementById("kybAdjustLoc").value;
+      if(!loc){ alert("請選擇儲位"); return; }
+    }
+    try{
+      await submitKybAdjustTxn(selectedItemId, sign, qty, loc, reason);
+    }catch(e){
+      console.error("KYB庫存校正送出失敗：", e);
+      alert("送出失敗：" + (e.message || "資料庫拒絕寫入。請聯絡管理者確認 Firebase 權限。"));
+    }
+  });
+}
+
+async function submitKybAdjustTxn(itemId, adjustSign, qty, loc, reason){
+  const itemRef = db.collection("kybItems").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  const cur = kybLocQty(allLocs[loc]);
+  const next = adjustSign === "+" ? cur + qty : cur - qty;
+  if(next < 0) throw new Error("庫存不足，無法調負這個數量");
+  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+  await itemRef.update({locations: allLocs});
+  await db.collection("kybTransactions").add({
+    itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
+    operator: currentUser.name, reason, editLog: [],
+    createdAt: new Date().toISOString()
+  });
+  closeModal();
+}
+
+// 編輯進銷貨／庫存校正紀錄：日期、數量、儲位、業務、客戶姓名都可以改，類型不能改。
 // 儲位一定要從現有儲位清單選（不能自己打字）。
 // 不管改哪個欄位，都會先把「舊紀錄」對庫存的影響完全還原，再套用「新紀錄」的影響，確保庫存數量一定會跟著正確增減。
 function openEditKybTxnModal(txnId){
@@ -163,7 +278,7 @@ function openEditKybTxnModal(txnId){
   const html = `
     <div class="sheet-head"><h2>編輯進銷貨紀錄</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" value="${escapeHtml(itemLabel)}" disabled></div>
-    <div class="form-row"><label>類型</label><input type="text" value="${t.type==='in'?'進貨':'銷貨'}" disabled></div>
+    <div class="form-row"><label>類型</label><input type="text" value="${txnTypeLabel(t)}" disabled></div>
     <div class="form-row"><label>日期</label><input type="date" id="editKybTxnDate" value="${escapeHtml(t.date||todayStr())}"></div>
     <div class="form-row"><label>數量</label><input type="number" id="editKybTxnQty" min="1" value="${t.qty}"></div>
     <div class="form-row"><label>儲位</label>
@@ -201,17 +316,17 @@ async function saveEditKybTxn(t, next){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原（進貨要扣掉、銷貨要加回去）
-    const oldSign = t.type === "in" ? -1 : 1;
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
+    const oldSign = -txnSign(t);
     const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
     if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
 
-    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容
-    const newSign = t.type === "in" ? 1 : -1;
+    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位）
+    const newSign = txnSign(t);
     const curAtNewLoc = kybLocQty(allLocs[next.loc]);
     const resultQty = curAtNewLoc + next.qty*newSign;
-    if(t.type === "out" && resultQty < 0){
-      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成銷貨 ${next.qty}`);
+    if(newSign < 0 && resultQty < 0){
+      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
     }
     if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
 
@@ -238,7 +353,7 @@ async function deleteKybTxn(txnId){
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = {...(item.locations||{})};
-    const sign = t.type === "in" ? -1 : 1;
+    const sign = -txnSign(t);
     const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
     if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
     await itemRef.update({locations: allLocs});
