@@ -7,13 +7,12 @@
 // ============================================================
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAdFY3r5clzlmttku5HmkQGyScMEfsJVWg",
-  authDomain: "zheng-xiang-inventory-system.firebaseapp.com",
-  projectId: "zheng-xiang-inventory-system",
-  storageBucket: "zheng-xiang-inventory-system.firebasestorage.app",
-  messagingSenderId: "827937435977",
-  appId: "1:827937435977:web:9f34e3bd7811f161c6aa98",
-  measurementId: "G-X4X225X3WK"
+  apiKey: "AIzaSyCMXwEg0_sCNBBbxa-UtUP3Mvt68UtXMfw",
+  authDomain: "zhengxiang-inventory-453e7.firebaseapp.com",
+  projectId: "zhengxiang-inventory-453e7",
+  storageBucket: "zhengxiang-inventory-453e7.firebasestorage.app",
+  messagingSenderId: "509486517332",
+  appId: "1:509486517332:web:f3da124af0340c5eb731c1"
 };
 
 // 帳號登入用的內部網域（因為員工登入只需要輸入簡單帳號名稱，不需要 email 格式，
