@@ -113,6 +113,7 @@
       <div class="page-head">
         <div class="toolbar">
           <button class="primary" id="newTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="newAdjustBtn">+ 庫存校正</button>
           <button id="newItemBtn">+ 新增品項</button>
         </div>
         <div class="toolbar">
@@ -246,6 +247,7 @@
       <div class="page-head">
         <div class="toolbar">
           <button class="primary" id="kybNewTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="kybNewAdjustBtn">+ 庫存校正</button>
           <button id="kybNewItemBtn">+ 新增車型</button>
         </div>
         <div class="toolbar">
@@ -344,16 +346,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js"></script>
-<script src="core.js?v=20260806b"></script>
+<script src="core.js?v=20260807"></script>
 <script src="modal-shared.js"></script>
 <script src="tire-inventory.js?v=20260803"></script>
-<script src="tire-transactions-orders.js"></script>
+<script src="tire-transactions-orders.js?v=20260807"></script>
 <script src="locations-users.js"></script>
 <script src="data-import.js"></script>
 <script src="backup-restore.js"></script>
 <script src="handover-backup.js"></script>
 <script src="kyb-inventory.js?v=20260803"></script>
-<script src="kyb-transactions-orders.js"></script>
+<script src="kyb-transactions-orders.js?v=20260807"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
