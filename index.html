@@ -39,6 +39,10 @@
         <span class="category-icon" id="categoryIconKyb"></span>
         <span class="category-label">KYB避震器</span>
       </button>
+      <button class="category-card" data-category="pad">
+        <span class="category-icon" id="categoryIconPad"></span>
+        <span class="category-label">YangPo來令片</span>
+      </button>
     </div>
   </div>
 </div>
@@ -330,6 +334,113 @@
       </div>
       <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桶／藍桶／深藍桶會依「車型＋避震款式」分別比對，不會互相覆蓋。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桶匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
     </section>
+
+    <!-- ===================== YangPo 來令片模組（獨立品項，不與輪胎/KYB混用） ===================== -->
+
+    <!-- 來令片 庫存查詢 -->
+    <section class="page" id="page-pad-query">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="padQueryBox" placeholder="輸入車款、年份或規格關鍵字">
+        </div>
+        <div class="count" id="padQueryCount"></div>
+      </div>
+      <div id="padQueryResults"></div>
+    </section>
+
+    <!-- 來令片 庫存總表 -->
+    <section class="page" id="page-pad-master">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="padMasterBox" placeholder="輸入車款、年份或規格篩選">
+          <button id="padExportBtn">匯出目前結果(Excel)</button>
+        </div>
+        <div class="count" id="padMasterCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>車款</th><th>年份</th><th>規格</th><th>總量</th><th>儲位分布（點擊可調整／搬倉）</th><th>品號/前(F)</th><th>FMSI NO./前(F)</th><th>品號/後(R)</th><th>FMSI NO./後(R)</th><th>圖片</th><th>價格</th><th>備註</th><th>操作</th></tr></thead>
+          <tbody id="padMasterBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 來令片 進銷貨管理 -->
+    <section class="page" id="page-pad-txn">
+      <div class="page-head">
+        <div class="toolbar">
+          <button class="primary" id="padNewTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="padNewAdjustBtn">+ 庫存校正</button>
+          <button id="padNewItemBtn">+ 新增規格</button>
+        </div>
+        <div class="toolbar">
+          <input type="date" id="padTxnFilterFrom">
+          <span style="font-size:13px;color:var(--muted);">～</span>
+          <input type="date" id="padTxnFilterTo">
+          <input type="text" id="padTxnFilterSalesperson" placeholder="篩選業務姓名">
+          <input type="text" id="padTxnFilterCustomer" placeholder="篩選客戶姓名">
+          <button id="padTxnFilterClearBtn">清除篩選</button>
+        </div>
+        <div class="count" id="padTxnCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>日期</th><th>類型</th><th>品項</th><th>數量</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
+          <tbody id="padTxnBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 來令片 訂單管理 -->
+    <section class="page" id="page-pad-orders">
+      <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="padOrdersStatusFilter">
+            <option value="pending">待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
+        <div class="count" id="padOrdersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>業務</th><th>品項</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
+          <tbody id="padOrdersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 來令片 我的訂單 -->
+    <section class="page" id="page-pad-myorders">
+      <div class="page-head">
+        <div class="count" id="padMyOrdersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>品項</th><th>數量</th><th>客戶</th><th>狀態</th></tr></thead>
+          <tbody id="padMyOrdersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 來令片 儲位管理 -->
+    <section class="page" id="page-pad-loc">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="padNewLocInput" placeholder="新儲位代碼，例如 A左">
+          <button class="primary" id="padAddLocBtn">新增儲位</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>儲位代碼</th><th>操作</th></tr></thead>
+          <tbody id="padLocBody"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -346,7 +457,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js?v=20260807b"></script>
-<script src="core.js?v=20260807"></script>
+<script src="core.js?v=20260813"></script>
 <script src="modal-shared.js"></script>
 <script src="tire-inventory.js?v=20260803"></script>
 <script src="tire-transactions-orders.js?v=20260807"></script>
@@ -356,6 +467,8 @@
 <script src="handover-backup.js"></script>
 <script src="kyb-inventory.js?v=20260803"></script>
 <script src="kyb-transactions-orders.js?v=20260807"></script>
+<script src="pad-inventory.js?v=20260813"></script>
+<script src="pad-transactions-orders.js?v=20260813"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
