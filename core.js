@@ -364,6 +364,7 @@ const PAD_TAB_DEFS = [
   {id:"pad-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
   {id:"pad-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
   {id:"pad-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
+  {id:"pad-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
   {id:"users",        label:"使用者管理", icon:ICONS.users, roles:["admin"]},
 ];
 function currentTabDefs(){ return currentCategory === "kyb" ? KYB_TAB_DEFS : currentCategory === "pad" ? PAD_TAB_DEFS : TIRE_TAB_DEFS; }
