@@ -441,6 +441,18 @@
         </table>
       </div>
     </section>
+
+    <!-- 來令片 資料匯入（獨立於輪胎／KYB的資料匯入，避免誤動到對方的資料） -->
+    <section class="page" id="page-pad-import">
+      <div class="toolbar">
+        <button id="padClearDataBtn">清除所有來令片品項與儲位資料</button>
+      </div>
+      <div class="toolbar">
+        <input type="file" id="padImportFile" accept=".xlsx">
+        <button class="primary" id="padImportBtn">開始匯入</button>
+      </div>
+      <div class="count" id="padImportStatus">這個工具僅適用於來令片資料，不會動到輪胎／KYB的品項／儲位：<br>上傳含「車款」「年份」「規格」「品號/前(F)」「FMSI/前(F)」「品號/後(R)」「FMSI/後(R)」「價格」「備註」欄位的資料表 → 自動新增來令片品項（僅新增，不會更新或覆蓋已存在的資料，重複匯入同一份檔案會產生重複資料，請先用上面的清除按鈕清掉再重新匯入）。（庫存與儲位請自行在「來令片庫存總表」輸入）。</div>
+    </section>
   </main>
 </div>
 
@@ -469,6 +481,7 @@
 <script src="kyb-transactions-orders.js?v=20260807"></script>
 <script src="pad-inventory.js?v=20260813"></script>
 <script src="pad-transactions-orders.js?v=20260813"></script>
+<script src="pad-data-import.js?v=20260813"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
