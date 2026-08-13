@@ -22,7 +22,8 @@ const ICONS = {
 
 const CATEGORY_ICONS = {
   tire: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><line x1="12" y1="3" x2="12" y2="6.2"/><line x1="12" y1="17.8" x2="12" y2="21"/><line x1="3" y1="12" x2="6.2" y2="12"/><line x1="17.8" y1="12" x2="21" y2="12"/></svg>',
-  kyb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="8"/><rect x="8.5" y="8" width="7" height="10" rx="1.5"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="9" y1="10.5" x2="15" y2="10.5"/><line x1="9" y1="13.5" x2="15" y2="13.5"/></svg>'
+  kyb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="8"/><rect x="8.5" y="8" width="7" height="10" rx="1.5"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="9" y1="10.5" x2="15" y2="10.5"/><line x1="9" y1="13.5" x2="15" y2="13.5"/></svg>',
+  pad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14c0-4.5 2-8 8-8s8 3.5 8 8v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4z"/><circle cx="8.5" cy="15" r="1"/><circle cx="15.5" cy="15" r="1"/></svg>'
 };
 
 let currentUser = null;
@@ -45,6 +46,14 @@ let tireListenersStarted = false;
 let kybListenersStarted = false;
 let queryVisibleCount = 200;
 let kybQueryVisibleCount = 200;
+
+let padItemsCache = [];
+let padLocationsCache = [];
+let padOrdersCache = [];
+let padMyOrdersCache = [];
+let padTxnCache = [];
+let padListenersStarted = false;
+let padQueryVisibleCount = 200;
 
 // 目前所有活著的 Firestore onSnapshot 監聽器的取消訂閱函式。
 // 登出時會全部呼叫、清空，避免同一分頁換帳號登入時，殘留上一位使用者的監聽器與資料。
@@ -154,6 +163,25 @@ function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
 }
 
+function padLocQty(loc){ return Number(loc)||0; }
+function padTotalQty(item){
+  const locs = item.locations || {};
+  return Object.values(locs).reduce((a,b)=>a+padLocQty(b), 0);
+}
+function padLocList(item){
+  const locs = item.locations || {};
+  const rows = Object.keys(locs).map(code=>({code, qty:padLocQty(locs[code])})).filter(r=>r.qty>0);
+  rows.sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant"));
+  return rows;
+}
+function padLocSummary(item){
+  const list = padLocList(item);
+  return list.map(l=>`${l.code}×${l.qty}`).join("、") || "-";
+}
+function padHasPendingStock(item){
+  return padLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
+}
+
 // ---- 進銷貨／庫存校正 共用邏輯：type 可能是 "in"（進貨）、"out"（銷貨）、"adjust"（庫存校正）----
 // txnSign：這筆紀錄「套用」時對庫存的正負號；還原（編輯或刪除）時取相反數 -txnSign(t)。
 function txnSign(t){
@@ -165,7 +193,7 @@ function txnTypeLabel(t){
   return t.type === "in" ? "進貨" : "銷貨";
 }
 
-// 業務欄位共用元件（輪胎／KYB 共用）：
+// 業務欄位共用元件（輪胎／KYB／來令片 共用）：
 // 管理者：顯示下拉選單，選項來自「使用者管理」裡啟用中的員工＋管理者；
 //         如果原本存的值不在目前使用者清單裡（例如已離職員工），會多加一個選項顯示原值並預選它，不會被無聲蓋掉。
 // 員工本人：不用選，直接鎖定顯示自己的姓名（唯讀），送出時就是自己。
@@ -210,6 +238,7 @@ function resetSessionState(){
   usersListenerStarted = false;
   tireListenersStarted = false;
   kybListenersStarted = false;
+  padListenersStarted = false;
   currentCategory = null;
   itemsCache = [];
   locationsCache = [];
@@ -223,8 +252,14 @@ function resetSessionState(){
   kybOrdersCache = [];
   kybMyOrdersCache = [];
   kybTxnCache = [];
+  padItemsCache = [];
+  padLocationsCache = [];
+  padOrdersCache = [];
+  padMyOrdersCache = [];
+  padTxnCache = [];
   queryVisibleCount = 200;
   kybQueryVisibleCount = 200;
+  padQueryVisibleCount = 200;
   const backupBanner = document.getElementById("backupBanner");
   if(backupBanner) backupBanner.classList.add("hidden");
   const ordersBanner = document.getElementById("ordersBanner");
@@ -276,6 +311,7 @@ auth.onAuthStateChanged(async (user)=>{
 
 document.getElementById("categoryIconTire").innerHTML = CATEGORY_ICONS.tire;
 document.getElementById("categoryIconKyb").innerHTML = CATEGORY_ICONS.kyb;
+document.getElementById("categoryIconPad").innerHTML = CATEGORY_ICONS.pad;
 
 function showCategoryScreen(){
   document.getElementById("app").classList.add("hidden");
@@ -287,7 +323,7 @@ function switchToCategory(cat){
   document.getElementById("categoryScreen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
   document.getElementById("appTitle").textContent =
-    "正享庫存管理系統｜" + (currentCategory === "kyb" ? "KYB避震器" : "輪胎");
+    "正享庫存管理系統｜" + (currentCategory === "kyb" ? "KYB避震器" : currentCategory === "pad" ? "YangPo來令片" : "輪胎");
   buildTabs();
   checkFridayBanner();
   startListeners();
@@ -321,13 +357,22 @@ const KYB_TAB_DEFS = [
   {id:"kyb-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
   {id:"users",        label:"使用者管理", icon:ICONS.users, roles:["admin"]},
 ];
-function currentTabDefs(){ return currentCategory === "kyb" ? KYB_TAB_DEFS : TIRE_TAB_DEFS; }
+const PAD_TAB_DEFS = [
+  {id:"pad-query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
+  {id:"pad-myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
+  {id:"pad-master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
+  {id:"pad-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
+  {id:"pad-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
+  {id:"pad-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
+  {id:"users",        label:"使用者管理", icon:ICONS.users, roles:["admin"]},
+];
+function currentTabDefs(){ return currentCategory === "kyb" ? KYB_TAB_DEFS : currentCategory === "pad" ? PAD_TAB_DEFS : TIRE_TAB_DEFS; }
 
 function buildTabs(){
   const nav = document.getElementById("tabs");
   const visible = currentTabDefs().filter(t=>t.roles.includes(currentUser.role));
   nav.innerHTML = visible.map((t,i)=>
-    `<button data-tab="${t.id}" class="${i===0?'active':''}">${t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}</button>`
+    `<button data-tab="${t.id}" class="${i===0?'active':''}">${t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}</button>`
   ).join("");
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+visible[0].id).classList.add("active");
@@ -400,8 +445,11 @@ function startListeners(){
   if(currentUser.role === "admin"){
     if(!tireListenersStarted){ tireListenersStarted = true; startTireListeners(); }
     if(!kybListenersStarted){ kybListenersStarted = true; startKybListeners(); }
+    if(!padListenersStarted){ padListenersStarted = true; startPadListeners(); }
   } else if(currentCategory === "kyb"){
     if(!kybListenersStarted){ kybListenersStarted = true; startKybListeners(); }
+  } else if(currentCategory === "pad"){
+    if(!padListenersStarted){ padListenersStarted = true; startPadListeners(); }
   } else {
     if(!tireListenersStarted){ tireListenersStarted = true; startTireListeners(); }
   }
@@ -492,6 +540,44 @@ function startKybListeners(){
   }
 }
 
+function startPadListeners(){
+  startRealtimeListener(()=>db.collection("padItems"), snap=>{
+    padItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderPadQuery(); renderPadMaster();
+  }, "來令片品項");
+  startRealtimeListener(()=>db.collection("padLocations"), snap=>{
+    padLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderPadLocations();
+  }, "來令片儲位");
+  // 同輪胎／KYB：進銷貨管理分頁員工也看得到，交易紀錄不分角色都要訂閱。
+  startRealtimeListener(()=>db.collection("padTransactions").orderBy("date","desc").limit(200), snap=>{
+    padTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderPadTxns();
+  }, "來令片進銷貨");
+  if(currentUser.role === "admin"){
+    startRealtimeListener(()=>db.collection("padOrders").orderBy("requestedAt","desc").limit(300), snap=>{
+      padOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderPadOrders();
+      updatePadOrdersBadge();
+    }, "來令片訂單");
+  } else {
+    let myPadOrdersByUid = [], myPadOrdersByName = [];
+    const refreshMyPadOrders = ()=>{
+      const merged = new Map([...myPadOrdersByName, ...myPadOrdersByUid].map(o=>[o.id, o]));
+      padMyOrdersCache = [...merged.values()];
+      renderPadMyOrders();
+    };
+    startRealtimeListener(()=>db.collection("padOrders").where("requestedByUid","==",currentUser.uid), snap=>{
+      myPadOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyPadOrders();
+    }, "我的來令片訂單（帳號）");
+    startRealtimeListener(()=>db.collection("padOrders").where("requestedByName","==",currentUser.name), snap=>{
+      myPadOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      refreshMyPadOrders();
+    }, "我的來令片訂單（姓名）");
+  }
+}
+
 function updateOrdersBadge(){
   const badge = document.getElementById("ordersTabBadge");
   const n = ordersCache.filter(o=>o.status==="pending").length;
@@ -502,7 +588,7 @@ document.getElementById("dismissOrdersBanner").addEventListener("click", ()=>{
   const banner = document.getElementById("ordersBanner");
   const target = (banner && banner.dataset.targetCategory) || currentCategory;
   if(target && target !== currentCategory) switchToCategory(target);
-  const tabId = target === "kyb" ? "kyb-orders" : "orders";
+  const tabId = target === "kyb" ? "kyb-orders" : target === "pad" ? "pad-orders" : "orders";
   const btn = document.querySelector(`nav.tabs button[data-tab="${tabId}"]`);
   if(btn) btn.click();
 });
@@ -514,13 +600,20 @@ function updateKybOrdersBadge(){
   updateOrdersBannerCombined();
 }
 
-// 管理者專用：把「輪胎＋KYB 待確認訂單」加總後同步到手機主畫面 App 圖示的角標數字（簡化版）。
+function updatePadOrdersBadge(){
+  const badge = document.getElementById("padOrdersTabBadge");
+  const n = padOrdersCache.filter(o=>o.status==="pending").length;
+  if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
+  updateOrdersBannerCombined();
+}
+
+// 管理者專用：把「輪胎＋KYB＋來令片 待確認訂單」加總後同步到手機主畫面 App 圖示的角標數字（簡化版）。
 // 只有目前登入者是管理者才會設定，且僅在瀏覽器/裝置支援 Badging API 時生效（iOS 16.4+、Android Chrome 等）。
 // 這個角標只在 App 已開啟過、仍在背景執行時才會更新，App 完全關閉時不會主動推播更新（要做到那個要串推播通知，屬於完整版功能）。
-function updateAppBadgeForAdmin(tireN, kybN){
+function updateAppBadgeForAdmin(tireN, kybN, padN){
   if(!currentUser || currentUser.role !== "admin") return;
   if(!("setAppBadge" in navigator)) return;
-  const total = tireN + kybN;
+  const total = tireN + kybN + padN;
   if(total > 0){
     navigator.setAppBadge(total).catch(()=>{});
   } else if("clearAppBadge" in navigator){
@@ -533,15 +626,17 @@ function updateOrdersBannerCombined(){
   const bannerText = document.getElementById("ordersBannerText");
   const tireN = ordersCache.filter(o=>o.status==="pending").length;
   const kybN = kybOrdersCache.filter(o=>o.status==="pending").length;
-  updateAppBadgeForAdmin(tireN, kybN);
+  const padN = padOrdersCache.filter(o=>o.status==="pending").length;
+  updateAppBadgeForAdmin(tireN, kybN, padN);
   if(!banner || !bannerText) return;
-  if(tireN === 0 && kybN === 0){ banner.classList.add("hidden"); return; }
+  if(tireN === 0 && kybN === 0 && padN === 0){ banner.classList.add("hidden"); return; }
   const parts = [];
   if(tireN > 0) parts.push(`輪胎 ${tireN} 筆`);
   if(kybN > 0) parts.push(`KYB ${kybN} 筆`);
+  if(padN > 0) parts.push(`來令片 ${padN} 筆`);
   bannerText.textContent = `有新訂單待確認：${parts.join("、")}`;
-  const otherCategory = currentCategory === "kyb" ? "tire" : "kyb";
-  const otherN = otherCategory === "kyb" ? kybN : tireN;
-  banner.dataset.targetCategory = otherN > 0 ? otherCategory : currentCategory;
+  const pendingByCategory = { tire: tireN, kyb: kybN, pad: padN };
+  const otherWithPending = Object.keys(pendingByCategory).find(cat=> cat !== currentCategory && pendingByCategory[cat] > 0);
+  banner.dataset.targetCategory = otherWithPending || currentCategory;
   banner.classList.remove("hidden");
 }
