@@ -62,15 +62,35 @@ async function tryImportPadSheet(wb, statusEl){
 
   statusEl.textContent = `偵測到來令片資料表，共 ${newItems.length} 筆，匯入中...`;
 
+  // 每一批 commit 前先寫入「進行中」訊息，並用 15 秒逾時包住，
+  // 這樣如果卡住（例如權限被拒、網路問題），會明確顯示是哪一批失敗、失敗原因，
+  // 不會讓畫面一直停在「匯入中」卻看不出發生了什麼事。
+  function withTimeout(promise, ms, label){
+    return Promise.race([
+      promise,
+      new Promise((_, reject)=> setTimeout(()=> reject(new Error(`${label} 逾時（超過 ${ms/1000} 秒沒有回應，可能是網路問題或 Firestore 權限設定擋住了寫入）`)), ms))
+    ]);
+  }
+
   let count = 0;
+  let batchNum = 0;
+  const totalBatches = Math.ceil(newItems.length / 400);
   while(count < newItems.length){
+    batchNum++;
     const batch = db.batch();
     const chunk = newItems.slice(count, count+400);
     chunk.forEach(it=>{
       const ref = db.collection("padItems").doc();
       batch.set(ref, it);
     });
-    await batch.commit();
+    statusEl.textContent = `匯入中...正在寫入第 ${batchNum}/${totalBatches} 批（共 ${newItems.length} 筆）`;
+    try{
+      await withTimeout(batch.commit(), 15000, `第 ${batchNum}/${totalBatches} 批`);
+    } catch(err){
+      console.error("[來令片匯入] 批次寫入失敗：", err);
+      statusEl.textContent = `匯入中斷：第 ${batchNum}/${totalBatches} 批寫入失敗（已成功寫入 ${count} 筆）。錯誤訊息：${err && err.message ? err.message : err}`;
+      return true;
+    }
     count += chunk.length;
     statusEl.textContent = `匯入中...已完成 ${count}/${newItems.length}`;
   }
@@ -83,17 +103,22 @@ document.getElementById("padClearDataBtn").addEventListener("click", async ()=>{
   if(!confirm("確定要清除所有「來令片品項」與「來令片儲位」資料嗎？（不會動到輪胎／KYB資料，也不會動到來令片的進出貨紀錄）這通常是為了重新匯入正確的資料才做，確定要繼續嗎？")) return;
   const statusEl = document.getElementById("padImportStatus");
   statusEl.textContent = "清除中...";
-  const itemsSnap = await db.collection("padItems").get();
-  const locSnap = await db.collection("padLocations").get();
-  const allDocs = [...itemsSnap.docs, ...locSnap.docs];
-  let done = 0;
-  while(done < allDocs.length){
-    const batch = db.batch();
-    allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
-    await batch.commit();
-    done += 400;
+  try{
+    const itemsSnap = await db.collection("padItems").get();
+    const locSnap = await db.collection("padLocations").get();
+    const allDocs = [...itemsSnap.docs, ...locSnap.docs];
+    let done = 0;
+    while(done < allDocs.length){
+      const batch = db.batch();
+      allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+      done += 400;
+    }
+    statusEl.textContent = `已清除 ${itemsSnap.size} 筆來令片品項與 ${locSnap.size} 筆儲位資料，可以重新選檔匯入了。`;
+  } catch(err){
+    console.error("[來令片清除] 失敗：", err);
+    statusEl.textContent = `清除失敗，錯誤訊息：${err && err.message ? err.message : err}`;
   }
-  statusEl.textContent = `已清除 ${itemsSnap.size} 筆來令片品項與 ${locSnap.size} 筆儲位資料，可以重新選檔匯入了。`;
 });
 
 document.getElementById("padImportBtn").addEventListener("click", async ()=>{
@@ -101,9 +126,14 @@ document.getElementById("padImportBtn").addEventListener("click", async ()=>{
   const statusEl = document.getElementById("padImportStatus");
   if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
   statusEl.textContent = "讀取檔案中...";
-  const file = fileInput.files[0];
-  const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, {type:"array"});
-  if(await tryImportPadSheet(wb, statusEl)) return;
-  statusEl.textContent = "找不到可匯入的來令片資料表格式，請確認上傳的檔案含「車款」「品號/前(F)」欄位。";
+  try{
+    const file = fileInput.files[0];
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:"array"});
+    if(await tryImportPadSheet(wb, statusEl)) return;
+    statusEl.textContent = "找不到可匯入的來令片資料表格式，請確認上傳的檔案含「車款」「品號/前(F)」欄位。";
+  } catch(err){
+    console.error("[來令片匯入] 失敗：", err);
+    statusEl.textContent = `匯入失敗，錯誤訊息：${err && err.message ? err.message : err}`;
+  }
 });
