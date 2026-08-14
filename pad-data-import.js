@@ -137,3 +137,84 @@ document.getElementById("padImportBtn").addEventListener("click", async ()=>{
     statusEl.textContent = `匯入失敗，錯誤訊息：${err && err.message ? err.message : err}`;
   }
 });
+
+// ============================================================
+// 批次貼上圖片連結：上傳「品號」「連結」兩欄的表，依 partNoFront／partNoRear
+// 比對現有 padItems，比對到才更新對應的 imageLinkFront／imageLinkRear，
+// 比對不到的品項完全不動（不新增、不刪除任何品項）。
+// ============================================================
+function detectPadImageLinkSheet(wb){
+  for(const sheetName of wb.SheetNames){
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, blankrows:true});
+    for(let r=0; r<Math.min(rows.length, 10); r++){
+      const row = rows[r] || [];
+      if(row.includes("品號") && row.includes("連結")){
+        return { rows, headerRowIndex: r };
+      }
+    }
+  }
+  return null;
+}
+
+document.getElementById("padImageLinkBtn").addEventListener("click", async ()=>{
+  const fileInput = document.getElementById("padImageLinkFile");
+  const statusEl = document.getElementById("padImageLinkStatus");
+  if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
+  statusEl.textContent = "讀取檔案中...";
+  try{
+    const file = fileInput.files[0];
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:"array"});
+    const detected = detectPadImageLinkSheet(wb);
+    if(!detected){
+      statusEl.textContent = "找不到可用的資料表，請確認上傳的檔案含「品號」「連結」欄位。";
+      return;
+    }
+    const header = detected.rows[detected.headerRowIndex];
+    const codeIdx = header.indexOf("品號");
+    const linkIdx = header.indexOf("連結");
+    const dataRows = detected.rows.slice(detected.headerRowIndex + 1);
+    const toStr = v => (v===null||v===undefined) ? "" : v.toString().trim();
+
+    const linkMap = new Map();
+    dataRows.forEach(row=>{
+      if(!row) return;
+      const code = toStr(row[codeIdx]);
+      const link = toStr(row[linkIdx]);
+      if(code && link) linkMap.set(code, link);
+    });
+
+    if(linkMap.size === 0){ statusEl.textContent = "找不到可用的品號/連結資料列，請確認檔案內容。"; return; }
+
+    statusEl.textContent = `讀取到 ${linkMap.size} 筆品號連結，比對現有品項中...`;
+
+    const toUpdate = [];
+    padItemsCache.forEach(it=>{
+      const payload = {};
+      if(it.partNoFront && linkMap.has(it.partNoFront)) payload.imageLinkFront = linkMap.get(it.partNoFront);
+      if(it.partNoRear && linkMap.has(it.partNoRear)) payload.imageLinkRear = linkMap.get(it.partNoRear);
+      if(Object.keys(payload).length > 0) toUpdate.push({ id: it.id, payload });
+    });
+
+    if(toUpdate.length === 0){
+      statusEl.textContent = `比對完成，沒有任何品項的品號對得到（共檢查 ${padItemsCache.length} 筆現有品項），沒有更動任何資料。`;
+      return;
+    }
+
+    statusEl.textContent = `比對到 ${toUpdate.length} 筆品項，更新中...`;
+    let count = 0;
+    while(count < toUpdate.length){
+      const batch = db.batch();
+      const chunk = toUpdate.slice(count, count+400);
+      chunk.forEach(u=> batch.update(db.collection("padItems").doc(u.id), u.payload));
+      await batch.commit();
+      count += chunk.length;
+      statusEl.textContent = `更新中...已完成 ${count}/${toUpdate.length}`;
+    }
+    statusEl.textContent = `完成！共更新 ${toUpdate.length} 筆品項的圖片連結（共 ${linkMap.size} 筆品號連結中，比對到 ${toUpdate.length} 筆，其餘沒有對到的品項未被更動）。`;
+  } catch(err){
+    console.error("[來令片圖片連結匯入] 失敗：", err);
+    statusEl.textContent = `更新失敗，錯誤訊息：${err && err.message ? err.message : err}`;
+  }
+});
