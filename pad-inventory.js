@@ -16,6 +16,15 @@ function padItemLabel(it){
   return parts.join("　");
 }
 
+// 庫存查詢卡片用的圖片連結列：有連結的（前/後）才顯示可點的連結，沒有連結的顯示「目前無圖」，
+// 完全沒有品號的那一側（前或後）就不顯示。不會自動配圖，純粹依 imageLinkFront/imageLinkRear 欄位。
+function padQueryImgLine(it){
+  const parts = [];
+  if(it.partNoFront) parts.push(it.imageLinkFront ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkFront)}" target="_blank" rel="noopener">前圖</a>` : `<span class="empty-inline">前：目前無圖</span>`);
+  if(it.partNoRear) parts.push(it.imageLinkRear ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkRear)}" target="_blank" rel="noopener">後圖</a>` : `<span class="empty-inline">後：目前無圖</span>`);
+  return parts.join("　");
+}
+
 function renderPadQuery(){
   const box = document.getElementById("padQueryResults");
   const countEl = document.getElementById("padQueryCount");
@@ -36,6 +45,7 @@ function renderPadQuery(){
     const subParts = ["YangPo"];
     if(it.year) subParts.push(it.year);
     if(it.spec) subParts.push(it.spec);
+    const imgLine = padQueryImgLine(it);
     return `<div class="card${noStock?' card-nostock':''}${pending?' card-pending':''}">
       <div class="code-row">
         <div class="code">${escapeHtml(it.carModel)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</div>
@@ -44,6 +54,7 @@ function renderPadQuery(){
       <div class="sub">${escapeHtml(subParts.join('　'))}</div>
       <div class="qty">庫存 ${qty}${it.price!=null?`　　價格 ${it.price}`:""}</div>
       <div class="sub">儲位：${escapeHtml(padLocSummary(it))}</div>
+      ${imgLine ? `<div class="sub">${imgLine}</div>` : ''}
     </div>`;
   }).join("") || `<div class="empty">查無符合的規格</div>`;
 
