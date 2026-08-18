@@ -10,19 +10,30 @@ function padCompareItems(a, b){
   if(yearDiff !== 0) return yearDiff;
   return norm(a.spec||"").localeCompare(norm(b.spec||""));
 }
-// 搜尋清單／已選項目要顯示的完整標籤：車款＋年份＋規格，避免同車款不同年份或規格時混淆
 function padItemLabel(it){
   const parts = [it.carModel, it.year, it.spec].filter(Boolean);
   return parts.join("　");
 }
 
-// 庫存查詢卡片用的圖片連結列：有連結的（前/後）才顯示可點的連結，沒有連結的顯示「目前無圖」，
-// 完全沒有品號的那一側（前或後）就不顯示。不會自動配圖，純粹依 imageLinkFront/imageLinkRear 欄位。
+// 圖片連結列：連結文字顯示品號（如「前(YBP-2045)」），沒有連結時顯示「品號：目前無圖」
 function padQueryImgLine(it){
   const parts = [];
-  if(it.partNoFront) parts.push(it.imageLinkFront ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkFront)}" target="_blank" rel="noopener">前圖</a>` : `<span class="empty-inline">前：目前無圖</span>`);
-  if(it.partNoRear) parts.push(it.imageLinkRear ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkRear)}" target="_blank" rel="noopener">後圖</a>` : `<span class="empty-inline">後：目前無圖</span>`);
+  if(it.partNoFront) parts.push(it.imageLinkFront
+    ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkFront)}" target="_blank" rel="noopener">前(${escapeHtml(it.partNoFront)})</a>`
+    : `<span class="empty-inline">${escapeHtml(it.partNoFront)}：目前無圖</span>`);
+  if(it.partNoRear) parts.push(it.imageLinkRear
+    ? `<a class="img-view-btn" href="${escapeHtml(it.imageLinkRear)}" target="_blank" rel="noopener">後(${escapeHtml(it.partNoRear)})</a>`
+    : `<span class="empty-inline">${escapeHtml(it.partNoRear)}：目前無圖</span>`);
   return parts.join("　");
+}
+
+// 庫存行：前後分開顯示
+function padQueryStockLine(it){
+  const parts = [];
+  if(it.partNoFront) parts.push(`前庫存 ${padFrontQty(it)}`);
+  if(it.partNoRear)  parts.push(`後庫存 ${padRearQty(it)}`);
+  if(!it.partNoFront && !it.partNoRear) parts.push(`庫存 ${padTotalQty(it)}`);
+  return parts.join("　　");
 }
 
 function renderPadQuery(){
@@ -31,7 +42,10 @@ function renderPadQuery(){
   const q = norm(document.getElementById("padQueryBox").value);
 
   let list = padItemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) || norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q));
+  if(q) list = list.filter(it=>
+    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
+    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
+  );
   const padQuerySortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padQuerySortRank(a) - padQuerySortRank(b)) || padCompareItems(a,b));
 
@@ -46,13 +60,14 @@ function renderPadQuery(){
     if(it.year) subParts.push(it.year);
     if(it.spec) subParts.push(it.spec);
     const imgLine = padQueryImgLine(it);
+    const stockLine = padQueryStockLine(it);
     return `<div class="card${noStock?' card-nostock':''}${pending?' card-pending':''}">
       <div class="code-row">
         <div class="code">${escapeHtml(it.carModel)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</div>
         ${noStock ? '' : `<button class="order-btn" data-id="${it.id}">${ICONS.cart}叫貨</button>`}
       </div>
       <div class="sub">${escapeHtml(subParts.join('　'))}</div>
-      <div class="qty">庫存 ${qty}${it.price!=null?`　　價格 ${it.price}`:""}</div>
+      <div class="qty">${escapeHtml(stockLine)}${it.price!=null?`　　價格 ${it.price}`:""}</div>
       <div class="sub">儲位：${escapeHtml(padLocSummary(it))}</div>
       ${imgLine ? `<div class="sub">${imgLine}</div>` : ''}
     </div>`;
@@ -69,18 +84,25 @@ function renderPadQuery(){
   if(padQueryLoadMoreBtn) padQueryLoadMoreBtn.addEventListener("click", ()=>{ padQueryVisibleCount += 200; renderPadQuery(); });
 }
 
+// 叫貨 Modal：若品項有前後兩種品號，讓使用者先選前或後，再顯示該側的儲位和庫存
 function openPadOrderModal(itemId){
   const item = padItemsCache.find(i=>i.id===itemId);
   if(!item) return;
-  const options = padLocList(item);
-  const totalAvail = padTotalQty(item);
+  const hasFront = !!item.partNoFront;
+  const hasRear  = !!item.partNoRear;
+
+  const sideOpts = [];
+  if(hasFront) sideOpts.push(`<option value="front">前(F) ${escapeHtml(item.partNoFront)}</option>`);
+  if(hasRear)  sideOpts.push(`<option value="rear">後(R) ${escapeHtml(item.partNoRear)}</option>`);
+  const sideRow = sideOpts.length > 1
+    ? `<div class="form-row"><label>前/後</label><select id="padOrderSide">${sideOpts.join("")}</select></div>`
+    : `<input type="hidden" id="padOrderSide" value="${hasFront?'front':'rear'}">`;
+
   const html = `
     <div class="sheet-head"><h2>叫貨：${escapeHtml(padItemLabel(item))}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>規格</label><input type="text" value="${escapeHtml(padItemLabel(item))}（YangPo來令片）" disabled></div>
-    <div class="form-row"><label>目前總庫存</label><input type="text" value="${totalAvail}" disabled></div>
-    <div class="form-row"><label>選擇儲位</label>
-      <select id="padOrderLoc">${options.length ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("") : `<option value="">目前無庫存</option>`}</select>
-    </div>
+    ${sideRow}
+    <div class="form-row"><label>選擇儲位</label><select id="padOrderLoc"></select></div>
     <div class="form-row"><label>數量</label><select id="padOrderQty"></select></div>
     <div class="form-row"><label>客戶姓名</label><input type="text" id="padOrderCustomerName"></div>
     <div class="form-row"><label>聯絡方式</label><input type="text" id="padOrderCustomerContact"></div>
@@ -91,17 +113,35 @@ function openPadOrderModal(itemId){
     </div>`;
   openModal(html);
 
+  function getCurrentSide(){ return document.getElementById("padOrderSide").value; }
+
+  function refreshLocOptions(){
+    const side = getCurrentSide();
+    const options = padLocList(item, side);
+    window._padOrderLocOptions = options;
+    const locSelect = document.getElementById("padOrderLoc");
+    locSelect.innerHTML = options.length
+      ? options.map((o,i)=>`<option value="${i}">${escapeHtml(o.code)}（目前${o.qty}）</option>`).join("")
+      : `<option value="">目前無庫存</option>`;
+    refreshQtyOptions();
+  }
+
   function refreshQtyOptions(){
+    const options = window._padOrderLocOptions || [];
     const idx = Number(document.getElementById("padOrderLoc").value);
     const opt = options[idx];
     const qtySelect = document.getElementById("padOrderQty");
     if(!opt){ qtySelect.innerHTML = `<option value="0">目前無庫存</option>`; return; }
     qtySelect.innerHTML = Array.from({length:opt.qty},(_,i)=>i+1).map(n=>`<option value="${n}">${n}</option>`).join("");
   }
-  if(options.length) document.getElementById("padOrderLoc").addEventListener("change", refreshQtyOptions);
-  refreshQtyOptions();
+
+  if(sideOpts.length > 1) document.getElementById("padOrderSide").addEventListener("change", refreshLocOptions);
+  document.getElementById("padOrderLoc").addEventListener("change", refreshQtyOptions);
+  refreshLocOptions();
 
   document.getElementById("padOrderSubmitBtn").addEventListener("click", async ()=>{
+    const side = getCurrentSide();
+    const options = window._padOrderLocOptions || [];
     const idx = Number(document.getElementById("padOrderLoc").value);
     const opt = options[idx];
     const qty = Number(document.getElementById("padOrderQty").value);
@@ -112,9 +152,12 @@ function openPadOrderModal(itemId){
     if(!qty || qty<=0){ alert("請輸入正確的數量"); return; }
     if(qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不能叫超過這個數量`); return; }
     if(!customerName){ alert("請輸入客戶姓名"); return; }
+    const partNo = side === "rear" ? item.partNoRear : item.partNoFront;
     try{
       await db.collection("padOrders").add({
-        itemId: item.id, itemLabel: `${padItemLabel(item)}（YangPo來令片）`,
+        itemId: item.id,
+        itemLabel: `${padItemLabel(item)}（YangPo來令片）`,
+        side, partNo,
         qty, loc: opt.code,
         customerName, customerContact, customerNote,
         requestedByUid: currentUser.uid, requestedByName: currentUser.name,
@@ -133,7 +176,10 @@ document.getElementById("padMasterBox").addEventListener("input", renderPadMaste
 function renderPadMaster(){
   const q = norm(document.getElementById("padMasterBox").value);
   let list = padItemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) || norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q));
+  if(q) list = list.filter(it=>
+    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
+    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
+  );
   const padMasterSortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padMasterSortRank(a) - padMasterSortRank(b)) || padCompareItems(a,b));
 
@@ -141,20 +187,36 @@ function renderPadMaster(){
 
   const body = document.getElementById("padMasterBody");
   body.innerHTML = list.map(it=>{
-    const options = padLocList(it);
     const pending = padHasPendingStock(it);
-    const locHtml = options.length
-      ? options.map(o=>`<div class="loc-line${o.code===PENDING_STOCK_CODE?' loc-pending':''}" data-id="${it.id}" data-code="${escapeHtml(o.code)}">${escapeHtml(o.code)}：${o.qty}</div>`).join("")
-      : `<span class="empty-inline">無庫存</span>`;
+
+    // 前儲位欄：只在有品號/前 時顯示
+    const frontLocs = padFrontLocList(it);
+    const frontLocHtml = it.partNoFront
+      ? (frontLocs.length
+          ? frontLocs.map(o=>`<div class="loc-line${o.code===PENDING_STOCK_CODE?' loc-pending':''}" data-id="${it.id}" data-code="${escapeHtml(o.code)}" data-side="front">${escapeHtml(o.code)}：${o.qty}</div>`).join("")
+          : `<span class="empty-inline">無庫存</span>`)
+      : `<span class="empty-inline">-</span>`;
+
+    // 後儲位欄：只在有品號/後 時顯示
+    const rearLocs = padRearLocList(it);
+    const rearLocHtml = it.partNoRear
+      ? (rearLocs.length
+          ? rearLocs.map(o=>`<div class="loc-line${o.code===PENDING_STOCK_CODE?' loc-pending':''}" data-id="${it.id}" data-code="${escapeHtml(o.code)}" data-side="rear">${escapeHtml(o.code)}：${o.qty}</div>`).join("")
+          : `<span class="empty-inline">無庫存</span>`)
+      : `<span class="empty-inline">-</span>`;
+
     const imgBtn = (link,label)=> link
       ? `<button class="img-view-btn" data-link="${escapeHtml(link)}">${label}</button>`
       : `<span class="empty-inline">${label}無圖</span>`;
+
     return `<tr class="${pending?'row-pending':''}">
       <td>${escapeHtml(it.carModel)}${pending?'<span class="pending-tag">尚未入庫</span>':''}</td>
       <td>${escapeHtml(it.year||"")}</td>
       <td>${escapeHtml(it.spec||"")}</td>
-      <td>${padTotalQty(it)}</td>
-      <td class="loc-detail-cell">${locHtml}</td>
+      <td>${it.partNoFront ? padFrontQty(it) : '-'}</td>
+      <td class="loc-detail-cell">${frontLocHtml}</td>
+      <td>${it.partNoRear ? padRearQty(it) : '-'}</td>
+      <td class="loc-detail-cell">${rearLocHtml}</td>
       <td>${escapeHtml(it.partNoFront||"")}</td>
       <td>${escapeHtml(it.fmsiFront||"")}</td>
       <td>${escapeHtml(it.partNoRear||"")}</td>
@@ -164,10 +226,10 @@ function renderPadMaster(){
       <td>${escapeHtml(it.remark||"")}</td>
       <td>${currentUser.role==='admin' ? `<button data-del="${it.id}" data-model="${escapeHtml(padItemLabel(it))}">刪除</button>` : ""}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="13" class="empty">尚無資料</td></tr>`;
+  }).join("") || `<tr><td colspan="15" class="empty">尚無資料</td></tr>`;
 
   body.querySelectorAll(".loc-line").forEach(el=>{
-    el.addEventListener("click", ()=> openPadLocationModal(el.dataset.id, el.dataset.code));
+    el.addEventListener("click", ()=> openPadLocationModal(el.dataset.id, el.dataset.code, el.dataset.side));
   });
   body.querySelectorAll(".img-view-btn").forEach(b=>{
     b.addEventListener("click", ()=> window.open(b.dataset.link, "_blank"));
@@ -196,17 +258,20 @@ function deletePadItem(itemId, label){
     .catch(e=>alert("刪除失敗："+e.message));
 }
 
-function openPadLocationModal(itemId, code){
+// 儲位管理 Modal：side 指定操作前(front)或後(rear)庫存
+function openPadLocationModal(itemId, code, side){
   const item = padItemsCache.find(i=>i.id===itemId);
   if(!item) return;
-  const allLocs = item.locations || {};
+  const locField = side === "rear" ? "locationsRear" : "locationsFront";
+  const allLocs = item[locField] || {};
   const qty = padLocQty(allLocs[code]);
   const allCodes = padLocationsCache.map(l=>l.code);
+  const sideLabel = side === "rear" ? "後(R)" : "前(F)";
 
   const html = `
-    <div class="sheet-head"><h2>儲位管理：${escapeHtml(code)}</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
+    <div class="sheet-head"><h2>儲位管理：${escapeHtml(code)}（${sideLabel}）</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>目前儲位</label><input type="text" value="${escapeHtml(code)}" disabled></div>
-    <div class="form-row"><label>目前庫存</label><input type="text" value="${qty}" disabled></div>
+    <div class="form-row"><label>目前庫存（${sideLabel}）</label><input type="text" value="${qty}" disabled></div>
     <div class="form-row"><label>搬出數量（不搬就留空）</label><input type="number" id="padMoveQty" min="1" max="${qty}"></div>
     <div class="form-row"><label>搬到哪個儲位（只能選現有儲位）</label>
       <select id="padMoveTarget"><option value="">請選擇</option>${allCodes.filter(c=>c!==code).map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
@@ -230,7 +295,7 @@ function openPadLocationModal(itemId, code){
     newLocs[moveTarget] = padLocQty(newLocs[moveTarget]) + moveQty;
     if(newLocs[code] <= 0) delete newLocs[code];
 
-    db.collection("padItems").doc(itemId).update({ locations: newLocs })
+    db.collection("padItems").doc(itemId).update({ [locField]: newLocs })
       .then(()=>closeModal())
       .catch(e=>alert("更新失敗："+e.message));
   });
@@ -254,8 +319,6 @@ function editPadPrice(itemId){
   db.collection("padItems").doc(itemId).update(update).catch(e=>alert("更新失敗："+e.message));
 }
 
-// 圖片連結：這次先留空，Drive資料夾準備好之後由管理者手動貼上前／後兩張圖的連結。
-// 不會自動抓圖、不會把圖片存進Firebase，只存一個連結字串，點「看圖」才會另開分頁連去外部連結。
 function editPadImageLinks(itemId){
   if(currentUser.role !== "admin") return;
   const item = padItemsCache.find(i=>i.id===itemId);
@@ -275,9 +338,13 @@ function editPadImageLinks(itemId){
 document.getElementById("padExportBtn").addEventListener("click", ()=>{
   const list = window._padMasterFilteredList || [];
   const rows = list.map(it=>({
-    車款: it.carModel, 年份: it.year||"", 規格: it.spec||"", 總量: padTotalQty(it), 儲位分布: padLocSummary(it),
+    車款: it.carModel, 年份: it.year||"", 規格: it.spec||"",
+    "前量(F)": it.partNoFront ? padFrontQty(it) : "",
+    "前儲位(F)": it.partNoFront ? padFrontLocSummary(it) : "",
+    "後量(R)": it.partNoRear ? padRearQty(it) : "",
+    "後儲位(R)": it.partNoRear ? padRearLocSummary(it) : "",
     "品號/前(F)": it.partNoFront||"", "FMSI NO./前(F)": it.fmsiFront||"",
-    "品號/後(R)": it.partNoRear||"", "FMSI NO./後(R)": it.fmsiRear||"",
+    "品號/後(R)": it.partNoRear||"",  "FMSI NO./後(R)": it.fmsiRear||"",
     價格: it.price!=null?it.price:"", 備註: it.remark||""
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
