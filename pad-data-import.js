@@ -22,14 +22,14 @@ async function tryImportPadSheet(wb, statusEl){
 
   const header = detected.rows[detected.headerRowIndex];
   const modelIdx = header.indexOf("車款");
-  const yearIdx = header.indexOf("年份");
-  const specIdx = header.indexOf("規格");
+  const yearIdx  = header.indexOf("年份");
+  const specIdx  = header.indexOf("規格");
   const partFIdx = header.indexOf("品號/前(F)");
   const fmsiFIdx = header.indexOf("FMSI/前(F)");
   const partRIdx = header.indexOf("品號/後(R)");
   const fmsiRIdx = header.indexOf("FMSI/後(R)");
   const priceIdx = header.indexOf("價格");
-  const remarkIdx = header.indexOf("備註");
+  const remarkIdx= header.indexOf("備註");
 
   const dataRows = detected.rows.slice(detected.headerRowIndex + 1);
   const toNum = v => (v===null||v===undefined||v==="") ? null : Number(v);
@@ -46,14 +46,15 @@ async function tryImportPadSheet(wb, statusEl){
       year: toStr(row[yearIdx]),
       spec: toStr(row[specIdx]),
       partNoFront: toStr(row[partFIdx]),
-      fmsiFront: toStr(row[fmsiFIdx]),
-      partNoRear: toStr(row[partRIdx]),
-      fmsiRear: toStr(row[fmsiRIdx]),
+      fmsiFront:   toStr(row[fmsiFIdx]),
+      partNoRear:  toStr(row[partRIdx]),
+      fmsiRear:    toStr(row[fmsiRIdx]),
       price: priceIdx>=0 ? toNum(row[priceIdx]) : null,
       remark: remarkIdx>=0 ? toStr(row[remarkIdx]) : "",
-      locations: {},
+      locationsFront: {},
+      locationsRear: {},
       imageLinkFront: null,
-      imageLinkRear: null,
+      imageLinkRear:  null,
       brand: "YangPo"
     });
   });
@@ -62,9 +63,6 @@ async function tryImportPadSheet(wb, statusEl){
 
   statusEl.textContent = `偵測到來令片資料表，共 ${newItems.length} 筆，匯入中...`;
 
-  // 每一批 commit 前先寫入「進行中」訊息，並用 15 秒逾時包住，
-  // 這樣如果卡住（例如權限被拒、網路問題），會明確顯示是哪一批失敗、失敗原因，
-  // 不會讓畫面一直停在「匯入中」卻看不出發生了什麼事。
   function withTimeout(promise, ms, label){
     return Promise.race([
       promise,
@@ -105,7 +103,7 @@ document.getElementById("padClearDataBtn").addEventListener("click", async ()=>{
   statusEl.textContent = "清除中...";
   try{
     const itemsSnap = await db.collection("padItems").get();
-    const locSnap = await db.collection("padLocations").get();
+    const locSnap   = await db.collection("padLocations").get();
     const allDocs = [...itemsSnap.docs, ...locSnap.docs];
     let done = 0;
     while(done < allDocs.length){
@@ -123,7 +121,7 @@ document.getElementById("padClearDataBtn").addEventListener("click", async ()=>{
 
 document.getElementById("padImportBtn").addEventListener("click", async ()=>{
   const fileInput = document.getElementById("padImportFile");
-  const statusEl = document.getElementById("padImportStatus");
+  const statusEl  = document.getElementById("padImportStatus");
   if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
   statusEl.textContent = "讀取檔案中...";
   try{
@@ -137,6 +135,63 @@ document.getElementById("padImportBtn").addEventListener("click", async ()=>{
     statusEl.textContent = `匯入失敗，錯誤訊息：${err && err.message ? err.message : err}`;
   }
 });
+
+// ============================================================
+// 舊格式遷移工具：locations → locationsFront + locationsRear
+// 適用對象：上線新版本前已存入 Firestore 的 padItems（用舊的 locations 欄位）
+// 執行後：locationsFront = 原 locations，locationsRear = {}，locations 欄位刪除
+// ============================================================
+const padMigrateLocBtn = document.getElementById("padMigrateLocBtn");
+if(padMigrateLocBtn){
+  padMigrateLocBtn.addEventListener("click", async ()=>{
+    const statusEl = document.getElementById("padImportStatus");
+    if(!confirm("這是一次性遷移工具：會把所有舊格式（locations）的來令片品項轉換成新格式（locationsFront + locationsRear），轉換後無法還原。確定要繼續嗎？")) return;
+
+    statusEl.textContent = "讀取舊格式品項中...";
+    let snap;
+    try{
+      snap = await db.collection("padItems").get();
+    } catch(err){
+      statusEl.textContent = "讀取失敗：" + (err.message || err);
+      return;
+    }
+
+    const toMigrate = snap.docs.filter(d=>{
+      const data = d.data();
+      return data.locations !== undefined && data.locationsFront === undefined;
+    });
+
+    if(toMigrate.length === 0){
+      statusEl.textContent = "沒有需要遷移的品項（所有品項都已是新格式，或沒有任何品項）。";
+      return;
+    }
+
+    statusEl.textContent = `找到 ${toMigrate.length} 筆需要遷移，寫入中...`;
+    const deleteField = firebase.firestore.FieldValue.delete();
+    let done = 0;
+    while(done < toMigrate.length){
+      const chunk = toMigrate.slice(done, done+400);
+      const batch = db.batch();
+      chunk.forEach(doc=>{
+        const locs = doc.data().locations || {};
+        batch.update(doc.ref, {
+          locationsFront: locs,
+          locationsRear: {},
+          locations: deleteField
+        });
+      });
+      try{
+        await batch.commit();
+      } catch(err){
+        statusEl.textContent = `第 ${done+1}～${done+chunk.length} 筆寫入失敗：${err.message || err}（已成功遷移 ${done} 筆）`;
+        return;
+      }
+      done += chunk.length;
+      statusEl.textContent = `遷移中...已完成 ${done}/${toMigrate.length}`;
+    }
+    statusEl.textContent = `遷移完成！共遷移 ${toMigrate.length} 筆品項。請重新整理頁面讓畫面更新。`;
+  });
+}
 
 // ============================================================
 // 批次貼上圖片連結：上傳「品號」「連結」兩欄的表，依 partNoFront／partNoRear
@@ -159,7 +214,7 @@ function detectPadImageLinkSheet(wb){
 
 document.getElementById("padImageLinkBtn").addEventListener("click", async ()=>{
   const fileInput = document.getElementById("padImageLinkFile");
-  const statusEl = document.getElementById("padImageLinkStatus");
+  const statusEl  = document.getElementById("padImageLinkStatus");
   if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
   statusEl.textContent = "讀取檔案中...";
   try{
@@ -193,7 +248,7 @@ document.getElementById("padImageLinkBtn").addEventListener("click", async ()=>{
     padItemsCache.forEach(it=>{
       const payload = {};
       if(it.partNoFront && linkMap.has(it.partNoFront)) payload.imageLinkFront = linkMap.get(it.partNoFront);
-      if(it.partNoRear && linkMap.has(it.partNoRear)) payload.imageLinkRear = linkMap.get(it.partNoRear);
+      if(it.partNoRear  && linkMap.has(it.partNoRear))  payload.imageLinkRear  = linkMap.get(it.partNoRear);
       if(Object.keys(payload).length > 0) toUpdate.push({ id: it.id, payload });
     });
 
