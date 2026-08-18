@@ -55,14 +55,10 @@ let padTxnCache = [];
 let padListenersStarted = false;
 let padQueryVisibleCount = 200;
 
-// 目前所有活著的 Firestore onSnapshot 監聽器的取消訂閱函式。
-// 登出時會全部呼叫、清空，避免同一分頁換帳號登入時，殘留上一位使用者的監聽器與資料。
 let activeUnsubs = [];
 
 function norm(s){ return (s || "").toString().toUpperCase().replace(/\s+/g, ""); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
-// 把儲存的 UTC 時間字串（new Date().toISOString()）轉成台灣時間（UTC+8）顯示用字串，格式同原本 "YYYY-MM-DD HH:MM"
-// 只影響畫面顯示，不改變資料庫裡儲存的原始字串，也不影響用原始字串排序的邏輯
 function toTaipeiTimeStr(isoStr){
   if(!isoStr) return "";
   const d = new Date(isoStr);
@@ -81,7 +77,6 @@ function monthsBetween(dateStr){
   const now = new Date();
   return (now.getFullYear()-d.getFullYear())*12 + (now.getMonth()-d.getMonth());
 }
-
 function isoWeekToDate(year, week){
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const jan4Day = (jan4.getUTCDay() + 6) % 7;
@@ -138,7 +133,7 @@ function locDetailList(item){
 }
 function locSummary(item){
   const list = locDetailList(item);
-  return list.map(l=> `${l.code}×${l.qty}${l.date?`(${l.date})`:""}`).join("、") || "-";
+  return list.map(l=> `${l.code}x${l.qty}${l.date?`(${l.date})`:""}`).join("、") || "-";
 }
 function escapeHtml(s){
   return (s==null?"":s.toString()).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -157,33 +152,72 @@ function kybLocList(item){
 }
 function kybLocSummary(item){
   const list = kybLocList(item);
-  return list.map(l=>`${l.code}×${l.qty}`).join("、") || "-";
+  return list.map(l=>`${l.code}x${l.qty}`).join("、") || "-";
 }
 function kybHasPendingStock(item){
   return kybLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
 }
 
+// ============================================================
+// YangPo 來令片：前(Front) / 後(Rear) 分開追蹤庫存
+// 資料欄位：locationsFront / locationsRear（皆為 {儲位代碼: 數量} 物件）
+// 舊版（遷移前）資料使用單一 locations 欄位；讀取時以 || item.locations 相容舊格式。
+// ============================================================
 function padLocQty(loc){ return Number(loc)||0; }
-function padTotalQty(item){
-  const locs = item.locations || {};
+
+// 前(F) 庫存
+function padFrontQty(item){
+  const locs = item.locationsFront || {};
   return Object.values(locs).reduce((a,b)=>a+padLocQty(b), 0);
 }
-function padLocList(item){
-  const locs = item.locations || {};
+function padFrontLocList(item){
+  const locs = item.locationsFront || {};
   const rows = Object.keys(locs).map(code=>({code, qty:padLocQty(locs[code])})).filter(r=>r.qty>0);
   rows.sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant"));
   return rows;
 }
-function padLocSummary(item){
-  const list = padLocList(item);
-  return list.map(l=>`${l.code}×${l.qty}`).join("、") || "-";
-}
-function padHasPendingStock(item){
-  return padLocQty((item.locations||{})[PENDING_STOCK_CODE]) > 0;
+function padFrontLocSummary(item){
+  return padFrontLocList(item).map(l=>`${l.code}x${l.qty}`).join("、") || "-";
 }
 
-// ---- 進銷貨／庫存校正 共用邏輯：type 可能是 "in"（進貨）、"out"（銷貨）、"adjust"（庫存校正）----
-// txnSign：這筆紀錄「套用」時對庫存的正負號；還原（編輯或刪除）時取相反數 -txnSign(t)。
+// 後(R) 庫存
+function padRearQty(item){
+  const locs = item.locationsRear || {};
+  return Object.values(locs).reduce((a,b)=>a+padLocQty(b), 0);
+}
+function padRearLocList(item){
+  const locs = item.locationsRear || {};
+  const rows = Object.keys(locs).map(code=>({code, qty:padLocQty(locs[code])})).filter(r=>r.qty>0);
+  rows.sort((a,b)=> a.code.localeCompare(b.code, "zh-Hant"));
+  return rows;
+}
+function padRearLocSummary(item){
+  return padRearLocList(item).map(l=>`${l.code}x${l.qty}`).join("、") || "-";
+}
+
+// 前 + 後 合計
+function padTotalQty(item){
+  return padFrontQty(item) + padRearQty(item);
+}
+
+// 依 side ("front"/"rear") 取儲位清單（用於出貨/叫貨選儲位）
+function padLocList(item, side){
+  return side === "rear" ? padRearLocList(item) : padFrontLocList(item);
+}
+
+// 查詢卡片儲位摘要行（前後分開標示）
+function padLocSummary(item){
+  const f = item.partNoFront ? `前:${padFrontLocSummary(item)}` : null;
+  const r = item.partNoRear  ? `後:${padRearLocSummary(item)}`  : null;
+  return [f, r].filter(Boolean).join("　") || "-";
+}
+
+function padHasPendingStock(item){
+  return padLocQty((item.locationsFront||{})[PENDING_STOCK_CODE]) > 0
+      || padLocQty((item.locationsRear ||{})[PENDING_STOCK_CODE]) > 0;
+}
+
+// ---- 進銷貨／庫存校正 共用邏輯 ----
 function txnSign(t){
   if(t.type === "adjust") return t.adjustSign === "-" ? -1 : 1;
   return t.type === "in" ? 1 : -1;
@@ -193,10 +227,6 @@ function txnTypeLabel(t){
   return t.type === "in" ? "進貨" : "銷貨";
 }
 
-// 業務欄位共用元件（輪胎／KYB／來令片 共用）：
-// 管理者：顯示下拉選單，選項來自「使用者管理」裡啟用中的員工＋管理者；
-//         如果原本存的值不在目前使用者清單裡（例如已離職員工），會多加一個選項顯示原值並預選它，不會被無聲蓋掉。
-// 員工本人：不用選，直接鎖定顯示自己的姓名（唯讀），送出時就是自己。
 function salespersonFieldHtml(fieldId, currentValue){
   if(!currentUser || currentUser.role !== "admin"){
     return `<div class="form-row"><label>業務</label><input type="text" id="${fieldId}" value="${escapeHtml(currentUser?currentUser.name:"")}" disabled></div>`;
@@ -229,9 +259,6 @@ function doLogin(){
 
 document.getElementById("logoutBtn").addEventListener("click", ()=> auth.signOut());
 
-// 登出、或偵測到跟目前 currentUser 不同的帳號登入時呼叫：
-// 取消所有 Firestore 監聽、重設「監聽器已啟動」旗標、清空所有畫面快取，
-// 避免同一個瀏覽器分頁換帳號登入時，殘留上一位使用者的資料或畫面。
 function resetSessionState(){
   activeUnsubs.forEach(unsub=>{ try{ unsub(); }catch(e){} });
   activeUnsubs = [];
@@ -240,45 +267,24 @@ function resetSessionState(){
   kybListenersStarted = false;
   padListenersStarted = false;
   currentCategory = null;
-  itemsCache = [];
-  locationsCache = [];
-  usersCache = [];
-  txnCache = [];
-  brandsCache = [];
-  ordersCache = [];
-  myOrdersCache = [];
-  kybItemsCache = [];
-  kybLocationsCache = [];
-  kybOrdersCache = [];
-  kybMyOrdersCache = [];
-  kybTxnCache = [];
-  padItemsCache = [];
-  padLocationsCache = [];
-  padOrdersCache = [];
-  padMyOrdersCache = [];
-  padTxnCache = [];
-  queryVisibleCount = 200;
-  kybQueryVisibleCount = 200;
-  padQueryVisibleCount = 200;
+  itemsCache = []; locationsCache = []; usersCache = []; txnCache = [];
+  brandsCache = []; ordersCache = []; myOrdersCache = [];
+  kybItemsCache = []; kybLocationsCache = []; kybOrdersCache = [];
+  kybMyOrdersCache = []; kybTxnCache = [];
+  padItemsCache = []; padLocationsCache = []; padOrdersCache = [];
+  padMyOrdersCache = []; padTxnCache = [];
+  queryVisibleCount = 200; kybQueryVisibleCount = 200; padQueryVisibleCount = 200;
   const backupBanner = document.getElementById("backupBanner");
   if(backupBanner) backupBanner.classList.add("hidden");
   const ordersBanner = document.getElementById("ordersBanner");
   if(ordersBanner) ordersBanner.classList.add("hidden");
-  // 登出時順便清掉 App 圖示角標，避免下一個人登入前殘留數字。
-  if("clearAppBadge" in navigator){
-    navigator.clearAppBadge().catch(()=>{});
-  }
+  if("clearAppBadge" in navigator){ navigator.clearAppBadge().catch(()=>{}); }
 }
 
-// 管理者專用：跟系統要「允許通知」的權限。
-// iOS 規定：就算完全不送推播訊息，只是想在 App 圖示顯示角標數字，也一定要先取得通知權限，
-// 不然 navigator.setAppBadge() 呼叫了也不會顯示任何東西。只會跳一次系統詢問視窗，使用者選過後不會再問。
 function requestNotificationPermissionForAdmin(){
   if(!currentUser || currentUser.role !== "admin") return;
   if(!("Notification" in window)) return;
-  if(Notification.permission === "default"){
-    Notification.requestPermission().catch(()=>{});
-  }
+  if(Notification.permission === "default"){ Notification.requestPermission().catch(()=>{}); }
 }
 
 auth.onAuthStateChanged(async (user)=>{
@@ -297,11 +303,7 @@ auth.onAuthStateChanged(async (user)=>{
     return;
   }
   const data = doc.data();
-  // 換了不同帳號登入（例如同分頁先前有另一位使用者登入過）：保險起見先重設一次狀態，
-  // 確保待會 startListeners() 一定會依「這位」使用者的角色重新訂閱正確的資料。
-  if(currentUser && currentUser.uid !== user.uid){
-    resetSessionState();
-  }
+  if(currentUser && currentUser.uid !== user.uid){ resetSessionState(); }
   currentUser = { uid: user.uid, name: data.name, username: data.username, role: data.role };
   document.getElementById("splash").classList.add("hidden");
   document.getElementById("whoLabel").textContent = `${currentUser.name}（${currentUser.role==='admin'?'管理者':'員工'}）`;
@@ -332,42 +334,39 @@ function switchToCategory(cat){
 document.querySelectorAll(".category-card").forEach(btn=>{
   btn.addEventListener("click", ()=> switchToCategory(btn.dataset.category));
 });
-
-document.getElementById("switchCategoryBtn").addEventListener("click", ()=>{
-  showCategoryScreen();
-});
+document.getElementById("switchCategoryBtn").addEventListener("click", ()=>{ showCategoryScreen(); });
 
 const TIRE_TAB_DEFS = [
-  {id:"query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
-  {id:"myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
-  {id:"master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
-  {id:"orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
-  {id:"loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
-  {id:"import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
-  {id:"users",    label:"使用者管理", icon:ICONS.users, roles:["admin"]},
+  {id:"query",    label:"庫存查詢",   icon:ICONS.query,    roles:["admin","member"]},
+  {id:"myorders", label:"我的訂單",   icon:ICONS.myorders, roles:["member"]},
+  {id:"master",   label:"庫存總表",   icon:ICONS.master,   roles:["admin","member"]},
+  {id:"txn",      label:"進銷貨管理", icon:ICONS.txn,      roles:["admin","member"]},
+  {id:"orders",   label:"訂單管理",   icon:ICONS.orders,   roles:["admin"]},
+  {id:"loc",      label:"儲位管理",   icon:ICONS.loc,      roles:["admin"]},
+  {id:"import",   label:"資料匯入",   icon:ICONS.txn,      roles:["admin"]},
+  {id:"users",    label:"使用者管理", icon:ICONS.users,    roles:["admin"]},
 ];
 const KYB_TAB_DEFS = [
-  {id:"kyb-query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
-  {id:"kyb-myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
-  {id:"kyb-master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
-  {id:"kyb-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
-  {id:"kyb-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
-  {id:"kyb-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
-  {id:"users",        label:"使用者管理", icon:ICONS.users, roles:["admin"]},
+  {id:"kyb-query",    label:"庫存查詢",   icon:ICONS.query,    roles:["admin","member"]},
+  {id:"kyb-myorders", label:"我的訂單",   icon:ICONS.myorders, roles:["member"]},
+  {id:"kyb-master",   label:"庫存總表",   icon:ICONS.master,   roles:["admin","member"]},
+  {id:"kyb-txn",      label:"進銷貨管理", icon:ICONS.txn,      roles:["admin","member"]},
+  {id:"kyb-orders",   label:"訂單管理",   icon:ICONS.orders,   roles:["admin"]},
+  {id:"kyb-loc",      label:"儲位管理",   icon:ICONS.loc,      roles:["admin"]},
+  {id:"kyb-import",   label:"資料匯入",   icon:ICONS.txn,      roles:["admin"]},
+  {id:"users",        label:"使用者管理", icon:ICONS.users,    roles:["admin"]},
 ];
 const PAD_TAB_DEFS = [
-  {id:"pad-query",    label:"庫存查詢", icon:ICONS.query,   roles:["admin","member"]},
-  {id:"pad-myorders", label:"我的訂單", icon:ICONS.myorders,roles:["member"]},
-  {id:"pad-master",   label:"庫存總表", icon:ICONS.master,  roles:["admin","member"]},
-  {id:"pad-txn",      label:"進銷貨管理", icon:ICONS.txn,   roles:["admin","member"]},
-  {id:"pad-orders",   label:"訂單管理", icon:ICONS.orders,  roles:["admin"]},
-  {id:"pad-loc",      label:"儲位管理", icon:ICONS.loc,     roles:["admin"]},
-  {id:"pad-import",   label:"資料匯入", icon:ICONS.txn,     roles:["admin"]},
-  {id:"users",        label:"使用者管理", icon:ICONS.users, roles:["admin"]},
+  {id:"pad-query",    label:"庫存查詢",   icon:ICONS.query,    roles:["admin","member"]},
+  {id:"pad-myorders", label:"我的訂單",   icon:ICONS.myorders, roles:["member"]},
+  {id:"pad-master",   label:"庫存總表",   icon:ICONS.master,   roles:["admin","member"]},
+  {id:"pad-txn",      label:"進銷貨管理", icon:ICONS.txn,      roles:["admin","member"]},
+  {id:"pad-orders",   label:"訂單管理",   icon:ICONS.orders,   roles:["admin"]},
+  {id:"pad-loc",      label:"儲位管理",   icon:ICONS.loc,      roles:["admin"]},
+  {id:"pad-import",   label:"資料匯入",   icon:ICONS.txn,      roles:["admin"]},
+  {id:"users",        label:"使用者管理", icon:ICONS.users,    roles:["admin"]},
 ];
-function currentTabDefs(){ return currentCategory === "kyb" ? KYB_TAB_DEFS : currentCategory === "pad" ? PAD_TAB_DEFS : TIRE_TAB_DEFS; }
+function currentTabDefs(){ return currentCategory==="kyb"?KYB_TAB_DEFS:currentCategory==="pad"?PAD_TAB_DEFS:TIRE_TAB_DEFS; }
 
 function buildTabs(){
   const nav = document.getElementById("tabs");
@@ -412,10 +411,6 @@ document.getElementById("dismissBanner").addEventListener("click", ()=>{
   sessionStorage.setItem("backupBannerDismissed_" + todayStr(), "1");
 });
 
-// 建立一個「會自動重連」的 Firestore 即時監聽：
-// 網路斷線或 Firestore 暫時出錯時，onSnapshot 會被中止，這裡會每 3 秒重新訂閱一次，
-// 使用者不需要手動重新整理頁面。同時把取消訂閱函式登記到 activeUnsubs，
-// 讓登出／換帳號時 resetSessionState() 可以確實停掉監聽與重試，不會殘留上一位使用者的資料。
 function startRealtimeListener(makeQuery, onData, label){
   let unsub = null;
   let retryTimer = null;
@@ -465,21 +460,17 @@ function startTireListeners(){
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
   }, "輪胎儲位");
-  // 進銷貨管理分頁管理者與員工都看得到，因此交易紀錄不分角色都要訂閱。
   startRealtimeListener(()=>db.collection("transactions").orderBy("date","desc").limit(200), snap=>{
     txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderTxns();
   }, "輪胎進銷貨");
   if(currentUser.role === "admin"){
-    // 抓近期訂單（不限狀態），讓「訂單管理」可以查已出貨／已取消的歷史，不是只看待確認的。
     startRealtimeListener(()=>db.collection("orders").orderBy("requestedAt","desc").limit(300), snap=>{
       ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderOrders();
       updateOrdersBadge();
     }, "輪胎訂單");
   } else {
-    // 員工的「我的訂單」同時用「帳號 ID」與「姓名」兩種方式比對後合併，
-    // 避免早期只記姓名沒記帳號 ID 的舊訂單，員工本人反而看不到。
     let myOrdersByUid = [], myOrdersByName = [];
     const refreshMyOrders = ()=>{
       const merged = new Map([...myOrdersByName, ...myOrdersByUid].map(o=>[o.id, o]));
@@ -487,15 +478,12 @@ function startTireListeners(){
       renderMyOrders();
     };
     startRealtimeListener(()=>db.collection("orders").where("requestedByUid","==",currentUser.uid), snap=>{
-      myOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyOrders();
+      myOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyOrders();
     }, "我的輪胎訂單（帳號）");
     startRealtimeListener(()=>db.collection("orders").where("requestedByName","==",currentUser.name), snap=>{
-      myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyOrders();
+      myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyOrders();
     }, "我的輪胎訂單（姓名）");
   }
-  // 品牌清單維持原本寫法：讀取失敗時直接退回內建預設品牌，不重試，避免新增品項時沒有品牌可選。
   activeUnsubs.push(db.collection("brands").onSnapshot(snap=>{
     brandsCache = snap.docs.map(d=>d.data().name);
     if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
@@ -511,13 +499,11 @@ function startKybListeners(){
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
   }, "KYB儲位");
-  // 同輪胎：進銷貨管理分頁員工也看得到，交易紀錄不分角色都要訂閱。
   startRealtimeListener(()=>db.collection("kybTransactions").orderBy("date","desc").limit(200), snap=>{
     kybTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybTxns();
   }, "KYB進銷貨");
   if(currentUser.role === "admin"){
-    // 同輪胎一樣，抓近期全部KYB訂單（不限狀態），讓「訂單管理」可以查歷史。
     startRealtimeListener(()=>db.collection("kybOrders").orderBy("requestedAt","desc").limit(300), snap=>{
       kybOrdersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
       renderKybOrders();
@@ -531,12 +517,10 @@ function startKybListeners(){
       renderKybMyOrders();
     };
     startRealtimeListener(()=>db.collection("kybOrders").where("requestedByUid","==",currentUser.uid), snap=>{
-      myKybOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyKybOrders();
+      myKybOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyKybOrders();
     }, "我的KYB訂單（帳號）");
     startRealtimeListener(()=>db.collection("kybOrders").where("requestedByName","==",currentUser.name), snap=>{
-      myKybOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyKybOrders();
+      myKybOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyKybOrders();
     }, "我的KYB訂單（姓名）");
   }
 }
@@ -550,7 +534,6 @@ function startPadListeners(){
     padLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderPadLocations();
   }, "來令片儲位");
-  // 同輪胎／KYB：進銷貨管理分頁員工也看得到，交易紀錄不分角色都要訂閱。
   startRealtimeListener(()=>db.collection("padTransactions").orderBy("date","desc").limit(200), snap=>{
     padTxnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderPadTxns();
@@ -569,12 +552,10 @@ function startPadListeners(){
       renderPadMyOrders();
     };
     startRealtimeListener(()=>db.collection("padOrders").where("requestedByUid","==",currentUser.uid), snap=>{
-      myPadOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyPadOrders();
+      myPadOrdersByUid = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyPadOrders();
     }, "我的來令片訂單（帳號）");
     startRealtimeListener(()=>db.collection("padOrders").where("requestedByName","==",currentUser.name), snap=>{
-      myPadOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      refreshMyPadOrders();
+      myPadOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyPadOrders();
     }, "我的來令片訂單（姓名）");
   }
 }
@@ -608,18 +589,12 @@ function updatePadOrdersBadge(){
   updateOrdersBannerCombined();
 }
 
-// 管理者專用：把「輪胎＋KYB＋來令片 待確認訂單」加總後同步到手機主畫面 App 圖示的角標數字（簡化版）。
-// 只有目前登入者是管理者才會設定，且僅在瀏覽器/裝置支援 Badging API 時生效（iOS 16.4+、Android Chrome 等）。
-// 這個角標只在 App 已開啟過、仍在背景執行時才會更新，App 完全關閉時不會主動推播更新（要做到那個要串推播通知，屬於完整版功能）。
 function updateAppBadgeForAdmin(tireN, kybN, padN){
   if(!currentUser || currentUser.role !== "admin") return;
   if(!("setAppBadge" in navigator)) return;
   const total = tireN + kybN + padN;
-  if(total > 0){
-    navigator.setAppBadge(total).catch(()=>{});
-  } else if("clearAppBadge" in navigator){
-    navigator.clearAppBadge().catch(()=>{});
-  }
+  if(total > 0){ navigator.setAppBadge(total).catch(()=>{}); }
+  else if("clearAppBadge" in navigator){ navigator.clearAppBadge().catch(()=>{}); }
 }
 
 function updateOrdersBannerCombined(){
