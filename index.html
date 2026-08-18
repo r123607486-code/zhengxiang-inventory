@@ -359,7 +359,7 @@
       </div>
       <div class="table-wrap">
         <table class="grid">
-          <thead><tr><th>車款</th><th>年份</th><th>規格</th><th>總量</th><th>儲位分布（點擊可調整／搬倉）</th><th>品號/前(F)</th><th>FMSI NO./前(F)</th><th>品號/後(R)</th><th>FMSI NO./後(R)</th><th>圖片</th><th>價格</th><th>備註</th><th>操作</th></tr></thead>
+          <thead><tr><th>車款</th><th>年份</th><th>規格</th><th>前量</th><th>前儲位（點擊調整）</th><th>後量</th><th>後儲位（點擊調整）</th><th>品號/前(F)</th><th>FMSI NO./前(F)</th><th>品號/後(R)</th><th>FMSI NO./後(R)</th><th>圖片</th><th>價格</th><th>備註</th><th>操作</th></tr></thead>
           <tbody id="padMasterBody"></tbody>
         </table>
       </div>
@@ -454,6 +454,11 @@
       <div class="count" id="padImportStatus">這個工具僅適用於來令片資料，不會動到輪胎／KYB的品項／儲位：<br>上傳含「車款」「年份」「規格」「品號/前(F)」「FMSI/前(F)」「品號/後(R)」「FMSI/後(R)」「價格」「備註」欄位的資料表 → 自動新增來令片品項（僅新增，不會更新或覆蓋已存在的資料，重複匯入同一份檔案會產生重複資料，請先用上面的清除按鈕清掉再重新匯入）。（庫存與儲位請自行在「來令片庫存總表」輸入）。</div>
 
       <div class="toolbar" style="margin-top:24px;">
+        <button id="padMigrateLocBtn">遷移舊版庫存格式（一次性工具）</button>
+      </div>
+      <div class="count" style="color:var(--muted);">如果系統在新版上線前就已有庫存資料，請點此一次性將舊格式（locations）轉換成新格式（locationsFront + locationsRear）。轉換後舊欄位會自動刪除，每個品項的現有庫存數量不變。</div>
+
+      <div class="toolbar" style="margin-top:24px;">
         <input type="file" id="padImageLinkFile" accept=".xlsx">
         <button class="primary" id="padImageLinkBtn">批次貼上圖片連結</button>
       </div>
@@ -475,7 +480,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js?v=20260807b"></script>
-<script src="core.js?v=20260813"></script>
+<script src="core.js?v=20260818"></script>
 <script src="modal-shared.js"></script>
 <script src="tire-inventory.js?v=20260803"></script>
 <script src="tire-transactions-orders.js?v=20260807"></script>
@@ -485,9 +490,9 @@
 <script src="handover-backup.js"></script>
 <script src="kyb-inventory.js?v=20260803"></script>
 <script src="kyb-transactions-orders.js?v=20260807"></script>
-<script src="pad-inventory.js?v=20260814"></script>
-<script src="pad-transactions-orders.js?v=20260813"></script>
-<script src="pad-data-import.js?v=20260814b"></script>
+<script src="pad-inventory.js?v=20260818"></script>
+<script src="pad-transactions-orders.js?v=20260818"></script>
+<script src="pad-data-import.js?v=20260818"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
