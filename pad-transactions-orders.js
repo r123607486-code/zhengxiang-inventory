@@ -24,9 +24,22 @@ function padLocField(side){ return side === "rear" ? "locationsRear" : "location
 function padReadLocs(item, side){
   const field = padLocField(side);
   if(item[field] !== undefined) return {...(item[field]||{})};
-  // 舊格式：side 未知，統一歸前
   if(side !== "rear" && item.locations !== undefined) return {...(item.locations||{})};
   return {};
+}
+
+// ============================================================
+// 共用品號同步：找出所有共用同一品號的 padItem
+// 進/出/調/刪 庫存時，全部一起更新，讓每張車款卡顯示相同庫存
+// ============================================================
+function getMatchingPadItems(itemId, side){
+  const item = padItemsCache.find(i=>i.id===itemId);
+  if(!item) return [];
+  const partNo = side === "rear" ? item.partNoRear : item.partNoFront;
+  if(!partNo) return [item];
+  return padItemsCache.filter(i=>
+    side === "rear" ? i.partNoRear === partNo : i.partNoFront === partNo
+  );
 }
 
 function renderPadTxns(){
@@ -183,6 +196,7 @@ function openPadTxnModal(){
 
 async function submitPadTxn(itemId, type, qty, loc, salesperson, side){
   const locField = padLocField(side);
+  // 讀主要品項的現有庫存（以使用者看到的那張卡為準）
   const itemRef = db.collection("padItems").doc(itemId);
   const itemSnap = await itemRef.get();
   const item = itemSnap.data();
@@ -190,8 +204,17 @@ async function submitPadTxn(itemId, type, qty, loc, salesperson, side){
   const cur = padLocQty(allLocs[loc]);
   const next = type === "in" ? cur + qty : cur - qty;
   if(next < 0) throw new Error("庫存不足，無法出貨");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({[locField]: allLocs});
+  const newLocs = {...allLocs};
+  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+  // 同步所有共用同品號的車款卡
+  const matching = getMatchingPadItems(itemId, side);
+  const batch = db.batch();
+  matching.forEach(mi=>{
+    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+  });
+  await batch.commit();
+
   await db.collection("padTransactions").add({
     itemId, type, qty, loc, side, date: todayStr(), operator: currentUser.name,
     salesperson: salesperson || "", editLog: [],
@@ -299,8 +322,17 @@ async function submitPadAdjustTxn(itemId, adjustSign, qty, loc, reason, side){
   const cur = padLocQty(allLocs[loc]);
   const next = adjustSign === "+" ? cur + qty : cur - qty;
   if(next < 0) throw new Error("庫存不足，無法調負這個數量");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({[locField]: allLocs});
+  const newLocs = {...allLocs};
+  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+  // 同步所有共用同品號的車款卡
+  const matching = getMatchingPadItems(itemId, side);
+  const batch = db.batch();
+  matching.forEach(mi=>{
+    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+  });
+  await batch.commit();
+
   await db.collection("padTransactions").add({
     itemId, type: "adjust", adjustSign, qty, loc, side, date: todayStr(),
     operator: currentUser.name, reason, editLog: [],
@@ -362,18 +394,25 @@ async function saveEditPadTxn(t, next){
     // 還原舊紀錄的庫存影響
     const oldSign = -txnSign(t);
     const revertedOldQty = padLocQty(allLocs[t.loc]) + t.qty*oldSign;
-    if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+    const newLocs = {...allLocs};
+    if(revertedOldQty <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = revertedOldQty;
 
     // 套用新紀錄
     const newSign = txnSign(t);
-    const curAtNewLoc = padLocQty(allLocs[next.loc]);
+    const curAtNewLoc = padLocQty(newLocs[next.loc]);
     const resultQty = curAtNewLoc + next.qty*newSign;
     if(newSign < 0 && resultQty < 0){
       throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
     }
-    if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
+    if(resultQty <= 0) delete newLocs[next.loc]; else newLocs[next.loc] = resultQty;
 
-    await itemRef.update({ [locField]: allLocs });
+    // 同步所有共用同品號的車款卡
+    const matching = getMatchingPadItems(t.itemId, side);
+    const batch = db.batch();
+    matching.forEach(mi=>{
+      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+    });
+    await batch.commit();
   }
 
   await db.collection("padTransactions").doc(t.id).update({
@@ -400,8 +439,16 @@ async function deletePadTxn(txnId){
     const allLocs = padReadLocs(item, side);
     const sign = -txnSign(t);
     const next = padLocQty(allLocs[t.loc]) + t.qty*sign;
-    if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
-    await itemRef.update({[locField]: allLocs});
+    const newLocs = {...allLocs};
+    if(next <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = next;
+
+    // 同步所有共用同品號的車款卡
+    const matching = getMatchingPadItems(t.itemId, side);
+    const batch = db.batch();
+    matching.forEach(mi=>{
+      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+    });
+    await batch.commit();
   }
   await db.collection("editLogs").add({
     txnId, source:"pad", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
@@ -561,8 +608,17 @@ async function submitPadOrderTxn(order, loc){
   const cur = padLocQty(allLocs[loc]);
   if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
   const next = cur - order.qty;
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({[locField]: allLocs});
+  const newLocs = {...allLocs};
+  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+  // 同步所有共用同品號的車款卡
+  const matching = getMatchingPadItems(order.itemId, side);
+  const batch = db.batch();
+  matching.forEach(mi=>{
+    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+  });
+  await batch.commit();
+
   return await db.collection("padTransactions").add({
     itemId: order.itemId, type: "out", qty: order.qty, loc, side,
     date: todayStr(), operator: currentUser.name,
