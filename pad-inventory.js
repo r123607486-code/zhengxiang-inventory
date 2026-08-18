@@ -189,7 +189,6 @@ function renderPadMaster(){
   body.innerHTML = list.map(it=>{
     const pending = padHasPendingStock(it);
 
-    // 前儲位欄：只在有品號/前 時顯示
     const frontLocs = padFrontLocList(it);
     const frontLocHtml = it.partNoFront
       ? (frontLocs.length
@@ -197,7 +196,6 @@ function renderPadMaster(){
           : `<span class="empty-inline">無庫存</span>`)
       : `<span class="empty-inline">-</span>`;
 
-    // 後儲位欄：只在有品號/後 時顯示
     const rearLocs = padRearLocList(it);
     const rearLocHtml = it.partNoRear
       ? (rearLocs.length
@@ -258,7 +256,7 @@ function deletePadItem(itemId, label){
     .catch(e=>alert("刪除失敗："+e.message));
 }
 
-// 儲位管理 Modal：side 指定操作前(front)或後(rear)庫存
+// 儲位搬倉 Modal：移動庫存時同步所有共用同品號的車款卡
 function openPadLocationModal(itemId, code, side){
   const item = padItemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -267,6 +265,9 @@ function openPadLocationModal(itemId, code, side){
   const qty = padLocQty(allLocs[code]);
   const allCodes = padLocationsCache.map(l=>l.code);
   const sideLabel = side === "rear" ? "後(R)" : "前(F)";
+
+  // 取得品號（用於找出所有共用的車款卡）
+  const partNo = side === "rear" ? item.partNoRear : item.partNoFront;
 
   const html = `
     <div class="sheet-head"><h2>儲位管理：${escapeHtml(code)}（${sideLabel}）</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
@@ -282,7 +283,7 @@ function openPadLocationModal(itemId, code, side){
     </div>`;
   openModal(html);
 
-  document.getElementById("padLocSaveBtn").addEventListener("click", ()=>{
+  document.getElementById("padLocSaveBtn").addEventListener("click", async ()=>{
     const moveQtyRaw = document.getElementById("padMoveQty").value;
     const moveTarget = document.getElementById("padMoveTarget").value;
     const moveQty = moveQtyRaw ? Number(moveQtyRaw) : 0;
@@ -295,9 +296,21 @@ function openPadLocationModal(itemId, code, side){
     newLocs[moveTarget] = padLocQty(newLocs[moveTarget]) + moveQty;
     if(newLocs[code] <= 0) delete newLocs[code];
 
-    db.collection("padItems").doc(itemId).update({ [locField]: newLocs })
-      .then(()=>closeModal())
-      .catch(e=>alert("更新失敗："+e.message));
+    // 同步所有共用同品號的車款卡
+    const matching = partNo
+      ? padItemsCache.filter(i=> side === "rear" ? i.partNoRear === partNo : i.partNoFront === partNo)
+      : [item];
+
+    const batch = db.batch();
+    matching.forEach(mi=>{
+      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+    });
+    try{
+      await batch.commit();
+      closeModal();
+    }catch(e){
+      alert("更新失敗："+e.message);
+    }
   });
 }
 
