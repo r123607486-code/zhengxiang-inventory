@@ -463,6 +463,12 @@
         <button class="primary" id="padImageLinkBtn">批次貼上圖片連結</button>
       </div>
       <div class="count" id="padImageLinkStatus">上傳含「品號」「連結」兩欄的資料表 → 依「品號/前(F)」或「品號/後(R)」比對現有品項，比對到才會更新圖片連結，比對不到的品項不會被更動，也不會新增或刪除任何品項。</div>
+
+      <div class="toolbar" style="margin-top:24px;">
+        <input type="file" id="padStockImportFile" accept=".xlsx">
+        <button class="primary" id="padStockImportBtn">批次匯入庫存數量</button>
+      </div>
+      <div class="count" id="padStockImportStatus">上傳含「品號」「數量」「儲位」三欄的資料表 → 依品號比對現有來令片品項（前/後），將該儲位的庫存數量覆蓋為 Excel 填寫的數量（其他儲位不受影響，填 0 表示清除該儲位庫存）。</div>
     </section>
   </main>
 </div>
@@ -492,7 +498,7 @@
 <script src="kyb-transactions-orders.js?v=20260807"></script>
 <script src="pad-inventory.js?v=20260818"></script>
 <script src="pad-transactions-orders.js?v=20260818"></script>
-<script src="pad-data-import.js?v=20260818"></script>
+<script src="pad-data-import.js?v=20260820"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
