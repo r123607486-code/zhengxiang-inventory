@@ -273,3 +273,118 @@ document.getElementById("padImageLinkBtn").addEventListener("click", async ()=>{
     statusEl.textContent = `更新失敗，錯誤訊息：${err && err.message ? err.message : err}`;
   }
 });
+
+// ============================================================
+// 批次匯入庫存數量：上傳「品號」「數量」「儲位」三欄表
+// 依品號比對 padItemsCache 的 partNoFront / partNoRear
+// 將對應儲位數量覆蓋（其他儲位不動，同品號多張車款卡同步更新）
+// 數量填 0 → 移除該儲位紀錄
+// ============================================================
+function detectPadStockSheet(wb){
+  for(const sheetName of wb.SheetNames){
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, blankrows:true});
+    for(let r=0; r<Math.min(rows.length, 10); r++){
+      const row = rows[r] || [];
+      if(row.includes("品號") && row.includes("數量") && row.includes("儲位")){
+        return { rows, headerRowIndex: r };
+      }
+    }
+  }
+  return null;
+}
+
+document.getElementById("padStockImportBtn").addEventListener("click", async ()=>{
+  const fileInput = document.getElementById("padStockImportFile");
+  const statusEl  = document.getElementById("padStockImportStatus");
+  if(!fileInput.files.length){ alert("請先選擇檔案"); return; }
+  statusEl.textContent = "讀取檔案中...";
+  try{
+    const file = fileInput.files[0];
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:"array"});
+    const detected = detectPadStockSheet(wb);
+    if(!detected){
+      statusEl.textContent = "找不到可用的資料表，請確認上傳的檔案含「品號」「數量」「儲位」三欄。";
+      return;
+    }
+    const header = detected.rows[detected.headerRowIndex];
+    const codeIdx = header.indexOf("品號");
+    const qtyIdx  = header.indexOf("數量");
+    const locIdx  = header.indexOf("儲位");
+    const dataRows = detected.rows.slice(detected.headerRowIndex + 1);
+    const toStr = v => (v===null||v===undefined) ? "" : v.toString().trim();
+    const toNum = v => (v===null||v===undefined||v==="") ? 0 : Number(v);
+
+    // 建 Map：品號 → { qty, loc }
+    const stockMap = new Map();
+    let skipped = 0;
+    dataRows.forEach(row=>{
+      if(!row) return;
+      const code = toStr(row[codeIdx]);
+      const qty  = toNum(row[qtyIdx]);
+      const loc  = toStr(row[locIdx]);
+      if(!code || !loc){ skipped++; return; }
+      if(isNaN(qty) || qty < 0){ skipped++; return; }
+      stockMap.set(code, { qty, loc });
+    });
+
+    if(stockMap.size === 0){
+      statusEl.textContent = `找不到可用的資料列（品號或儲位為空的列會跳過，共跳過 ${skipped} 列）。`;
+      return;
+    }
+
+    statusEl.textContent = `讀取到 ${stockMap.size} 筆品號，比對現有品項中...`;
+
+    // 若儲位不存在於系統，自動建立
+    const existingLocCodes = new Set(padLocationsCache.map(l=>l.code));
+    const newLocCodes = new Set();
+    stockMap.forEach(({loc})=>{ if(!existingLocCodes.has(loc)) newLocCodes.add(loc); });
+    for(const code of newLocCodes){
+      await db.collection("padLocations").add({code});
+    }
+
+    // 遍歷 padItemsCache，找出需要更新的品項
+    const updateMap = new Map(); // itemId → payload
+    padItemsCache.forEach(it=>{
+      const payload = {};
+      // 前
+      if(it.partNoFront && stockMap.has(it.partNoFront)){
+        const {qty, loc} = stockMap.get(it.partNoFront);
+        const newLocs = {...(it.locationsFront||{})};
+        if(qty > 0) newLocs[loc] = qty; else delete newLocs[loc];
+        payload.locationsFront = newLocs;
+      }
+      // 後
+      if(it.partNoRear && stockMap.has(it.partNoRear)){
+        const {qty, loc} = stockMap.get(it.partNoRear);
+        const newLocs = {...(it.locationsRear||{})};
+        if(qty > 0) newLocs[loc] = qty; else delete newLocs[loc];
+        payload.locationsRear = newLocs;
+      }
+      if(Object.keys(payload).length > 0) updateMap.set(it.id, payload);
+    });
+
+    if(updateMap.size === 0){
+      statusEl.textContent = `比對完成，沒有任何品項的品號對得到（共檢查 ${padItemsCache.length} 筆現有品項，Excel 中有 ${stockMap.size} 筆品號），沒有更動任何資料。`;
+      return;
+    }
+
+    statusEl.textContent = `比對到 ${updateMap.size} 筆品項，寫入庫存中...`;
+    const entries = Array.from(updateMap.entries());
+    let count = 0;
+    while(count < entries.length){
+      const batch = db.batch();
+      const chunk = entries.slice(count, count+400);
+      chunk.forEach(([id, payload])=> batch.update(db.collection("padItems").doc(id), payload));
+      await batch.commit();
+      count += chunk.length;
+      statusEl.textContent = `寫入中...已完成 ${count}/${entries.length}`;
+    }
+    const newLocMsg = newLocCodes.size ? `（自動建立了 ${newLocCodes.size} 個新儲位：${Array.from(newLocCodes).join("、")}）` : "";
+    statusEl.textContent = `完成！共更新 ${updateMap.size} 筆品項的庫存${newLocMsg}。請重新整理頁面查看最新庫存。`;
+  } catch(err){
+    console.error("[來令片庫存匯入] 失敗：", err);
+    statusEl.textContent = `匯入失敗，錯誤訊息：${err && err.message ? err.message : err}`;
+  }
+});
