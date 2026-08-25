@@ -77,6 +77,7 @@ function openOrderModal(itemId){
   if(options.length) locSelect.addEventListener("change", refreshQtyOptions);
   refreshQtyOptions();
 
+  // 叫貨只建立訂單，不異動 items → 不需要 change log
   document.getElementById("orderSubmitBtn").addEventListener("click", async ()=>{
     const idx = Number(document.getElementById("orderLoc").value);
     const opt = options[idx];
@@ -173,7 +174,10 @@ function renderMaster(){
   window._masterFilteredList = list;
 }
 
-function deleteItem(itemId, label){
+// ============================================================
+// 刪除品項（修改：atomic runTransaction + change log）
+// ============================================================
+async function deleteItem(itemId, label){
   if(currentUser.role !== "admin") return;
   const item = itemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -183,10 +187,31 @@ function deleteItem(itemId, label){
     return;
   }
   if(!confirm(`確定要刪除品項「${label}」嗎？此動作無法復原。`)) return;
-  db.collection("items").doc(itemId).delete()
-    .catch(e=>alert("刪除失敗："+e.message));
+
+  const itemRef    = db.collection("items").doc(itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
+  try {
+    await db.runTransaction(async (firestoreTxn)=>{
+      const settingsSnap = await firestoreTxn.get(settingsRef);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      firestoreTxn.delete(itemRef);
+
+      firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+        itemId, action:"delete", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    });
+  } catch(e){
+    alert("刪除失敗："+e.message);
+  }
 }
 
+// ============================================================
+// 儲位管理（修改：atomic runTransaction + change log）
+// ============================================================
 function openLocationModal(itemId, code, idx){
   const item = itemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -253,12 +278,29 @@ function openLocationModal(itemId, code, idx){
     if(newLocs[code] && newLocs[code].length===0) delete newLocs[code];
     if(moveTarget && newLocs[moveTarget] && newLocs[moveTarget].length===0) delete newLocs[moveTarget];
 
-    db.collection("items").doc(itemId).update({ locations: newLocs })
-      .then(()=>closeModal())
-      .catch(e=>alert("更新失敗："+e.message));
+    // 修改：atomic runTransaction + change log
+    const settingsRef = db.collection("settings").doc("tireCache");
+    db.runTransaction(async (firestoreTxn)=>{
+      const settingsSnap = await firestoreTxn.get(settingsRef);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      firestoreTxn.update(db.collection("items").doc(itemId), { locations: newLocs });
+
+      firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+        itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    })
+    .then(()=>closeModal())
+    .catch(e=>alert("更新失敗："+e.message));
   });
 }
 
+// ============================================================
+// editTwenty（修改：atomic runTransaction + change log）
+// ============================================================
 function editTwenty(itemId){
   if(currentUser.role !== "admin") return;
   const item = itemsCache.find(i=>i.id===itemId);
@@ -267,15 +309,28 @@ function editTwenty(itemId){
   const input = prompt("輸入20%金額（純數字）", cur);
   if(input === null) return;
   const val = input.trim();
-  if(val === ""){
-    db.collection("items").doc(itemId).update({ twenty: null }).catch(e=>alert("更新失敗："+e.message));
-    return;
-  }
-  const num = Number(val);
-  if(isNaN(num)){ alert("請輸入數字"); return; }
-  db.collection("items").doc(itemId).update({ twenty: num }).catch(e=>alert("更新失敗："+e.message));
+  const updateVal = val === "" ? null : Number(val);
+  if(val !== "" && isNaN(updateVal)){ alert("請輸入數字"); return; }
+
+  const settingsRef = db.collection("settings").doc("tireCache");
+  db.runTransaction(async (firestoreTxn)=>{
+    const settingsSnap = await firestoreTxn.get(settingsRef);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    firestoreTxn.update(db.collection("items").doc(itemId), { twenty: updateVal });
+
+    firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("更新失敗："+e.message));
 }
 
+// ============================================================
+// editSellPrice（修改：atomic runTransaction + change log）
+// ============================================================
 function editSellPrice(itemId){
   if(currentUser.role !== "admin") return;
   const item = itemsCache.find(i=>i.id===itemId);
@@ -284,13 +339,23 @@ function editSellPrice(itemId){
   const input = prompt("輸入售價金額（純數字）", cur);
   if(input === null) return;
   const val = input.trim();
-  if(val === ""){
-    db.collection("items").doc(itemId).update({ sellPrice: null }).catch(e=>alert("更新失敗："+e.message));
-    return;
-  }
-  const num = Number(val);
-  if(isNaN(num)){ alert("請輸入數字"); return; }
-  db.collection("items").doc(itemId).update({ sellPrice: num }).catch(e=>alert("更新失敗："+e.message));
+  const updateVal = val === "" ? null : Number(val);
+  if(val !== "" && isNaN(updateVal)){ alert("請輸入數字"); return; }
+
+  const settingsRef = db.collection("settings").doc("tireCache");
+  db.runTransaction(async (firestoreTxn)=>{
+    const settingsSnap = await firestoreTxn.get(settingsRef);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    firestoreTxn.update(db.collection("items").doc(itemId), { sellPrice: updateVal });
+
+    firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("更新失敗："+e.message));
 }
 
 document.getElementById("exportFilteredBtn").addEventListener("click", ()=>{

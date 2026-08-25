@@ -57,6 +57,293 @@ let padQueryVisibleCount = 200;
 
 let activeUnsubs = [];
 
+// ============================================================
+// 輪胎 READ 最佳化狀態（IndexedDB + 序號差異同步）
+// ============================================================
+let _tireIdb = null;                  // IndexedDB 連線實例
+let _stopTireTxnListener = null;      // 進銷貨 lazy listener 的停止函式
+let _stopTireOrdersListener = null;   // 訂單 lazy listener 的停止函式（管理員）
+let tirePendingOrdersCount = 0;       // 待確認訂單數（來自輕量監聽器）
+
+// ============================================================
+// IndexedDB 工具函式
+// DB: "zhx-inv" v1
+// Store "tireItems": keyPath "id"  → 輪胎品項物件
+// Store "tireMeta":  keyPath "key" → { key:"sync", changeSequence:number }
+// ============================================================
+const _IDB_NAME = "zhx-inv";
+const _IDB_VERSION = 1;
+
+function openTireIDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(_IDB_NAME, _IDB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const idb = e.target.result;
+      if(!idb.objectStoreNames.contains("tireItems"))
+        idb.createObjectStore("tireItems", { keyPath:"id" });
+      if(!idb.objectStoreNames.contains("tireMeta"))
+        idb.createObjectStore("tireMeta", { keyPath:"key" });
+    };
+    req.onsuccess = (e)=>resolve(e.target.result);
+    req.onerror  = (e)=>reject(e.target.error);
+  });
+}
+
+function idbGetAll(idb, storeName){
+  return new Promise((resolve, reject)=>{
+    const tx  = idb.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror   = ()=>reject(req.error);
+  });
+}
+
+function idbGet(idb, storeName, key){
+  return new Promise((resolve, reject)=>{
+    const tx  = idb.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).get(key);
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror   = ()=>reject(req.error);
+  });
+}
+
+function idbPutAll(idb, storeName, items){
+  return new Promise((resolve, reject)=>{
+    const tx    = idb.transaction(storeName, "readwrite");
+    const store = tx.objectStore(storeName);
+    items.forEach(item=>store.put(item));
+    tx.oncomplete = ()=>resolve();
+    tx.onerror    = ()=>reject(tx.error);
+  });
+}
+
+function idbDelete(idb, storeName, key){
+  return new Promise((resolve, reject)=>{
+    const tx = idb.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror    = ()=>reject(tx.error);
+  });
+}
+
+function idbClearAll(idb, storeName){
+  return new Promise((resolve, reject)=>{
+    const tx = idb.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).clear();
+    tx.oncomplete = ()=>resolve();
+    tx.onerror    = ()=>reject(tx.error);
+  });
+}
+
+// ============================================================
+// 輪胎品項初始化（IndexedDB 快取 + sequence 差異同步）
+// ============================================================
+
+/** 登入後呼叫：從 IDB 讀本地快取，再比對遠端 sequence，決定全讀或差異同步 */
+async function initTireItems(){
+  try {
+    _tireIdb = await openTireIDB();
+    const [localItems, localMeta] = await Promise.all([
+      idbGetAll(_tireIdb, "tireItems"),
+      idbGet(_tireIdb, "tireMeta", "sync")
+    ]);
+    const localSeq = localMeta ? (localMeta.changeSequence || 0) : 0;
+
+    // 立刻用本地快取渲染，使用者幾乎感覺不到延遲
+    if(localItems.length > 0){
+      itemsCache = localItems;
+      renderQuery(); renderMaster();
+    }
+
+    // 讀遠端序號（單一輕量文件）
+    const markerSnap = await db.collection("settings").doc("tireCache").get();
+    const remoteSeq  = markerSnap.exists ? (markerSnap.data().changeSequence || 0) : 0;
+
+    if(remoteSeq === localSeq && localItems.length > 0){
+      console.log("[輪胎] IDB 快取已是最新（seq=" + localSeq + "），略過讀取");
+    } else if(localItems.length === 0 || localSeq === 0){
+      await fullReadTireItems(remoteSeq);
+    } else {
+      await deltaSyncTireItems(localSeq, remoteSeq);
+    }
+  } catch(e){
+    console.error("[輪胎] IDB 初始化失敗，改用全讀取：", e);
+    _tireIdb = null;
+    try {
+      const snap = await db.collection("items").get();
+      itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderQuery(); renderMaster();
+    } catch(e2){
+      console.error("[輪胎] 全讀取也失敗：", e2);
+    }
+  }
+}
+
+/** 全量讀取所有品項，並寫入 IDB */
+async function fullReadTireItems(remoteSeq){
+  const snap = await db.collection("items").get();
+  itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderQuery(); renderMaster();
+  if(_tireIdb){
+    await idbClearAll(_tireIdb, "tireItems");
+    await idbPutAll(_tireIdb, "tireItems", itemsCache);
+    await idbPutAll(_tireIdb, "tireMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+/**
+ * 差異同步：只讀 localSeq 之後有異動的品項
+ * 每個 itemId 只 getDoc 一次，不重讀整個 items collection
+ */
+async function deltaSyncTireItems(localSeq, remoteSeq){
+  const changesSnap = await db.collection("tireItemChanges")
+    .where("changeSequence", ">", localSeq)
+    .orderBy("changeSequence", "asc")
+    .get();
+
+  if(changesSnap.empty){
+    // 差異日誌為空（理論上不應發生，但安全處理）
+    if(_tireIdb){
+      await idbPutAll(_tireIdb, "tireMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+    }
+    return;
+  }
+
+  // 每個 itemId 取最後一筆動作（後面的覆蓋前面的）
+  const itemActions = new Map(); // itemId → "update" | "delete"
+  changesSnap.docs.forEach(d=>{
+    const { itemId, action } = d.data();
+    itemActions.set(itemId, action);
+  });
+
+  const idsToFetch  = [];
+  const idsToDelete = [];
+  itemActions.forEach((action, itemId)=>{
+    if(action === "delete") idsToDelete.push(itemId);
+    else idsToFetch.push(itemId);
+  });
+
+  // 批次 getDoc（每批 ≤ 10，Firestore 限制）
+  const fetchedItems = [];
+  for(let i = 0; i < idsToFetch.length; i += 10){
+    const batch = idsToFetch.slice(i, i + 10);
+    const snaps = await Promise.all(batch.map(id=>db.collection("items").doc(id).get()));
+    snaps.forEach(s=>{ if(s.exists) fetchedItems.push({ id:s.id, ...s.data() }); });
+  }
+
+  // 套用到 itemsCache
+  idsToDelete.forEach(id=>{ itemsCache = itemsCache.filter(it=>it.id !== id); });
+  fetchedItems.forEach(item=>{
+    const idx = itemsCache.findIndex(it=>it.id === item.id);
+    if(idx >= 0) itemsCache[idx] = item;
+    else itemsCache.push(item);
+  });
+
+  renderQuery(); renderMaster();
+
+  // 更新 IDB
+  if(_tireIdb){
+    if(idsToDelete.length > 0){
+      await Promise.all(idsToDelete.map(id=>idbDelete(_tireIdb, "tireItems", id)));
+    }
+    if(fetchedItems.length > 0){
+      await idbPutAll(_tireIdb, "tireItems", fetchedItems);
+    }
+    await idbPutAll(_tireIdb, "tireMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+// ============================================================
+// 輪胎 marker 監聽器：監聽 settings/tireCache sequence 異動
+// ============================================================
+function startTireMarkerListener(){
+  startRealtimeListener(
+    ()=>db.collection("settings").doc("tireCache"),
+    async (snap)=>{
+      if(!snap.exists) return;
+      const remoteSeq = snap.data().changeSequence || 0;
+      let localSeq = 0;
+      if(_tireIdb){
+        const meta = await idbGet(_tireIdb, "tireMeta", "sync");
+        localSeq = meta ? (meta.changeSequence || 0) : 0;
+      }
+      if(remoteSeq > localSeq){
+        try {
+          await deltaSyncTireItems(localSeq, remoteSeq);
+        } catch(e){
+          console.error("[輪胎] marker 差異同步失敗：", e);
+        }
+      }
+    },
+    "輪胎快取標記"
+  );
+}
+
+// ============================================================
+// 輪胎待確認訂單數（admin 用，輕量監聽器，登入時啟動）
+// ============================================================
+function startTirePendingOrdersBadgeListener(){
+  startRealtimeListener(
+    ()=>db.collection("orders").where("status","==","pending"),
+    (snap)=>{
+      tirePendingOrdersCount = snap.size;
+      updateOrdersBadge();
+      updateOrdersBannerCombined();
+    },
+    "輪胎待確認訂單"
+  );
+}
+
+// ============================================================
+// 進銷貨 lazy 監聽器（進入進銷貨 tab 才啟動，離開時停止）
+// ============================================================
+function startLazyTireTxnListener(){
+  if(_stopTireTxnListener) return; // 已在執行
+  _stopTireTxnListener = startRealtimeListener(
+    ()=>db.collection("transactions").orderBy("date","desc").limit(200),
+    (snap)=>{
+      txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderTxns();
+    },
+    "輪胎進銷貨"
+  );
+}
+
+function stopLazyTireTxnListener(){
+  if(_stopTireTxnListener){
+    _stopTireTxnListener();
+    _stopTireTxnListener = null;
+    txnCache = [];
+  }
+}
+
+// ============================================================
+// 訂單管理 lazy 監聽器（admin 進入訂單 tab 才啟動，離開時停止）
+// ============================================================
+function startLazyTireOrdersListener(){
+  if(_stopTireOrdersListener) return; // 已在執行
+  _stopTireOrdersListener = startRealtimeListener(
+    ()=>db.collection("orders").orderBy("requestedAt","desc").limit(300),
+    (snap)=>{
+      ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderOrders();
+      // badge 不依賴 ordersCache，使用 tirePendingOrdersCount（獨立監聽器）
+    },
+    "輪胎訂單列表"
+  );
+}
+
+function stopLazyTireOrdersListener(){
+  if(_stopTireOrdersListener){
+    _stopTireOrdersListener();
+    _stopTireOrdersListener = null;
+    ordersCache = [];
+  }
+}
+
+// ============================================================
+// 工具函式
+// ============================================================
 function norm(s){ return (s || "").toString().toUpperCase().replace(/\s+/g, ""); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function toTaipeiTimeStr(isoStr){
@@ -274,6 +561,11 @@ function resetSessionState(){
   padItemsCache = []; padLocationsCache = []; padOrdersCache = [];
   padMyOrdersCache = []; padTxnCache = [];
   queryVisibleCount = 200; kybQueryVisibleCount = 200; padQueryVisibleCount = 200;
+  // 輪胎最佳化狀態清除
+  _tireIdb = null;
+  _stopTireTxnListener = null;
+  _stopTireOrdersListener = null;
+  tirePendingOrdersCount = 0;
   const backupBanner = document.getElementById("backupBanner");
   if(backupBanner) backupBanner.classList.add("hidden");
   const ordersBanner = document.getElementById("ordersBanner");
@@ -369,10 +661,16 @@ const PAD_TAB_DEFS = [
 function currentTabDefs(){ return currentCategory==="kyb"?KYB_TAB_DEFS:currentCategory==="pad"?PAD_TAB_DEFS:TIRE_TAB_DEFS; }
 
 function buildTabs(){
+  // 切離輪胎分類時，停止輪胎 lazy 監聽器
+  if(currentCategory !== "tire"){
+    stopLazyTireTxnListener();
+    stopLazyTireOrdersListener();
+  }
+
   const nav = document.getElementById("tabs");
   const visible = currentTabDefs().filter(t=>t.roles.includes(currentUser.role));
   nav.innerHTML = visible.map((t,i)=>
-    `<button data-tab="${t.id}" class="${i===0?'active':''}">${t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}</button>`
+    `<button data-tab="${t.id}" class="${i===0?'active':''}">${ t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}</button>`
   ).join("");
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+visible[0].id).classList.add("active");
@@ -383,8 +681,33 @@ function buildTabs(){
       document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
       document.getElementById("page-"+btn.dataset.tab).classList.add("active");
       updateStickyOffsets();
+
+      // 輪胎 lazy 監聽器管理
+      if(currentCategory === "tire"){
+        if(btn.dataset.tab === "txn"){
+          startLazyTireTxnListener();
+        } else {
+          stopLazyTireTxnListener();
+        }
+        if(btn.dataset.tab === "orders" && currentUser.role === "admin"){
+          startLazyTireOrdersListener();
+        } else {
+          stopLazyTireOrdersListener();
+        }
+      }
     });
   });
+
+  // 若初始 tab 是 txn 或 orders，補啟動 lazy 監聽器
+  if(currentCategory === "tire" && visible.length > 0){
+    const firstTab = visible[0].id;
+    if(firstTab === "txn") startLazyTireTxnListener();
+    if(firstTab === "orders" && currentUser.role === "admin") startLazyTireOrdersListener();
+  }
+
+  // 立刻更新 badge（重繪後 DOM 元素才存在）
+  if(currentCategory === "tire") updateOrdersBadge();
+
   updateStickyOffsets();
 }
 
@@ -411,6 +734,11 @@ document.getElementById("dismissBanner").addEventListener("click", ()=>{
   sessionStorage.setItem("backupBannerDismissed_" + todayStr(), "1");
 });
 
+/**
+ * 即時監聽器包裝函式。
+ * 修改：現在回傳 stopFn，方便 lazy 監聽器在 tab 切換時手動停止。
+ * stopFn 同時會被推入 activeUnsubs，確保登出時自動清理。
+ */
 function startRealtimeListener(makeQuery, onData, label){
   let unsub = null;
   let retryTimer = null;
@@ -423,11 +751,13 @@ function startRealtimeListener(makeQuery, onData, label){
     });
   };
   subscribe();
-  activeUnsubs.push(()=>{
+  const stopFn = ()=>{
     stopped = true;
     if(retryTimer){ window.clearTimeout(retryTimer); retryTimer = null; }
     if(unsub){ try{ unsub(); }catch(e){} }
-  });
+  };
+  activeUnsubs.push(stopFn);
+  return stopFn; // 回傳讓 lazy 監聽器可手動停止
 }
 
 function startListeners(){
@@ -451,26 +781,34 @@ function startListeners(){
   }
 }
 
+// ============================================================
+// 輪胎監聽器啟動（重寫：items 改用 IDB + marker，txn/orders 改為 lazy）
+// ============================================================
 function startTireListeners(){
-  startRealtimeListener(()=>db.collection("items"), snap=>{
-    itemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderQuery(); renderMaster();
-  }, "輪胎品項");
+  // 品項：IndexedDB 快取 + sequence marker 監聽器（取代原本全量 items onSnapshot）
+  initTireItems();
+  startTireMarkerListener();
+
+  // 儲位：仍然 eager 啟動（進銷貨表單需要，文件數量少）
   startRealtimeListener(()=>db.collection("locations"), snap=>{
     locationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderLocations();
   }, "輪胎儲位");
-  startRealtimeListener(()=>db.collection("transactions").orderBy("date","desc").limit(200), snap=>{
-    txnCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderTxns();
-  }, "輪胎進銷貨");
+
+  // 品牌：仍然 eager 啟動（新增品項表單需要，文件數量極少）
+  activeUnsubs.push(db.collection("brands").onSnapshot(snap=>{
+    brandsCache = snap.docs.map(d=>d.data().name);
+    if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
+  }, ()=>{ brandsCache = DEFAULT_BRANDS.slice(); }));
+
+  // 進銷貨：lazy（進入進銷貨 tab 才啟動）
+
+  // 訂單：
   if(currentUser.role === "admin"){
-    startRealtimeListener(()=>db.collection("orders").orderBy("requestedAt","desc").limit(300), snap=>{
-      ordersCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      renderOrders();
-      updateOrdersBadge();
-    }, "輪胎訂單");
+    // 管理員：badge 用輕量監聽器（登入時啟動）；全量訂單列表改為 lazy
+    startTirePendingOrdersBadgeListener();
   } else {
+    // 員工：只看自己的訂單（數量少，仍 eager）
     let myOrdersByUid = [], myOrdersByName = [];
     const refreshMyOrders = ()=>{
       const merged = new Map([...myOrdersByName, ...myOrdersByUid].map(o=>[o.id, o]));
@@ -484,10 +822,6 @@ function startTireListeners(){
       myOrdersByName = snap.docs.map(d=>({id:d.id, ...d.data()})); refreshMyOrders();
     }, "我的輪胎訂單（姓名）");
   }
-  activeUnsubs.push(db.collection("brands").onSnapshot(snap=>{
-    brandsCache = snap.docs.map(d=>d.data().name);
-    if(brandsCache.length === 0) brandsCache = DEFAULT_BRANDS.slice();
-  }, ()=>{ brandsCache = DEFAULT_BRANDS.slice(); }));
 }
 
 function startKybListeners(){
@@ -560,9 +894,13 @@ function startPadListeners(){
   }
 }
 
+// ============================================================
+// Badge / Banner 更新
+// 輪胎 badge 改用 tirePendingOrdersCount（輕量監聽器），不依賴 ordersCache
+// ============================================================
 function updateOrdersBadge(){
   const badge = document.getElementById("ordersTabBadge");
-  const n = ordersCache.filter(o=>o.status==="pending").length;
+  const n = tirePendingOrdersCount; // ← 改用輕量監聽器的計數，不再掃 ordersCache
   if(badge){ badge.textContent = n; badge.classList.toggle("hidden", n===0); }
   updateOrdersBannerCombined();
 }
@@ -600,7 +938,7 @@ function updateAppBadgeForAdmin(tireN, kybN, padN){
 function updateOrdersBannerCombined(){
   const banner = document.getElementById("ordersBanner");
   const bannerText = document.getElementById("ordersBannerText");
-  const tireN = ordersCache.filter(o=>o.status==="pending").length;
+  const tireN = tirePendingOrdersCount; // ← 改用輕量監聽器的計數
   const kybN = kybOrdersCache.filter(o=>o.status==="pending").length;
   const padN = padOrdersCache.filter(o=>o.status==="pending").length;
   updateAppBadgeForAdmin(tireN, kybN, padN);
