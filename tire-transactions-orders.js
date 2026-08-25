@@ -147,47 +147,72 @@ function openTxnModal(){
   });
 }
 
+// ============================================================
+// submitTxn（修改：atomic runTransaction + change log）
+// ============================================================
 async function submitTxn(itemId, type, qty, loc, batchDate, salesperson){
-  const itemRef = db.collection("items").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
-  let usedDate = null;
+  const itemRef     = db.collection("items").doc(itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
 
-  if(type === "in"){
-    const enteredDate = (batchDate||"").toString().trim() || null;
-    if(enteredDate){
-      const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
-      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
-      usedDate = enteredDate;
-    } else if(batches.length === 1){
-      batches[0].qty += qty;
-      usedDate = batches[0].productionDate || null;
-    } else {
-      const idx = batches.findIndex(b=> !b.productionDate);
-      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
-      usedDate = null;
-    }
-  } else {
-    const targetDate = batchDate || null;
-    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
-    if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
-    batches[idx].qty -= qty;
-    if(batches[idx].qty <= 0) batches.splice(idx, 1);
-    usedDate = targetDate;
+  try {
+    await db.runTransaction(async (firestoreTxn)=>{
+      const [itemSnap, settingsSnap] = await Promise.all([
+        firestoreTxn.get(itemRef),
+        firestoreTxn.get(settingsRef)
+      ]);
+      const item   = itemSnap.data();
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      const allLocs = {...(item.locations||{})};
+      let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+      let usedDate = null;
+
+      if(type === "in"){
+        const enteredDate = (batchDate||"").toString().trim() || null;
+        if(enteredDate){
+          const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
+          if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
+          usedDate = enteredDate;
+        } else if(batches.length === 1){
+          batches[0].qty += qty;
+          usedDate = batches[0].productionDate || null;
+        } else {
+          const idx = batches.findIndex(b=> !b.productionDate);
+          if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
+          usedDate = null;
+        }
+      } else {
+        const targetDate = batchDate || null;
+        const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+        if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
+        batches[idx].qty -= qty;
+        if(batches[idx].qty <= 0) batches.splice(idx, 1);
+        usedDate = targetDate;
+      }
+
+      allLocs[loc] = batches.filter(b=>b.qty>0);
+      if(allLocs[loc].length === 0) delete allLocs[loc];
+
+      firestoreTxn.update(itemRef, { locations: allLocs });
+
+      const txnRef = db.collection("transactions").doc();
+      firestoreTxn.set(txnRef, {
+        itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name,
+        salesperson: salesperson || "", editLog: [],
+        createdAt: new Date().toISOString()
+      });
+
+      firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+        itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    });
+    closeModal();
+  } catch(e){
+    alert("送出失敗："+e.message);
   }
-
-  allLocs[loc] = batches.filter(b=>b.qty>0);
-  if(allLocs[loc].length === 0) delete allLocs[loc];
-
-  await itemRef.update({locations: allLocs});
-  await db.collection("transactions").add({
-    itemId, type, qty, loc, batchDate: usedDate, date: todayStr(), operator: currentUser.name,
-    salesperson: salesperson || "", editLog: [],
-    createdAt: new Date().toISOString()
-  });
-  closeModal();
 }
 
 // 庫存校正：用於盤點差異、破損報廢、輸入錯誤等情形下直接調整庫存，
@@ -297,45 +322,66 @@ function openAdjustTxnModal(){
   });
 }
 
+// ============================================================
+// submitAdjustTxn（修改：atomic runTransaction + change log）
+// ============================================================
 async function submitAdjustTxn(itemId, adjustSign, qty, loc, batchDate, reason){
-  const itemRef = db.collection("items").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
-  let usedDate = null;
+  const itemRef     = db.collection("items").doc(itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
 
-  if(adjustSign === "+"){
-    const enteredDate = (batchDate||"").toString().trim() || null;
-    if(enteredDate){
-      const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
-      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
-      usedDate = enteredDate;
-    } else if(batches.length === 1){
-      batches[0].qty += qty;
-      usedDate = batches[0].productionDate || null;
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+    let usedDate = null;
+
+    if(adjustSign === "+"){
+      const enteredDate = (batchDate||"").toString().trim() || null;
+      if(enteredDate){
+        const idx = batches.findIndex(b=> (b.productionDate||null) === enteredDate);
+        if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: enteredDate });
+        usedDate = enteredDate;
+      } else if(batches.length === 1){
+        batches[0].qty += qty;
+        usedDate = batches[0].productionDate || null;
+      } else {
+        const idx = batches.findIndex(b=> !b.productionDate);
+        if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
+        usedDate = null;
+      }
     } else {
-      const idx = batches.findIndex(b=> !b.productionDate);
-      if(idx>=0) batches[idx].qty += qty; else batches.push({ qty, productionDate: null });
-      usedDate = null;
+      const targetDate = batchDate || null;
+      const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+      if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
+      batches[idx].qty -= qty;
+      if(batches[idx].qty <= 0) batches.splice(idx, 1);
+      usedDate = targetDate;
     }
-  } else {
-    const targetDate = batchDate || null;
-    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
-    if(idx < 0){ throw new Error("找不到指定的批次，請重新整理頁面再試一次"); }
-    batches[idx].qty -= qty;
-    if(batches[idx].qty <= 0) batches.splice(idx, 1);
-    usedDate = targetDate;
-  }
 
-  allLocs[loc] = batches.filter(b=>b.qty>0);
-  if(allLocs[loc].length === 0) delete allLocs[loc];
+    allLocs[loc] = batches.filter(b=>b.qty>0);
+    if(allLocs[loc].length === 0) delete allLocs[loc];
 
-  await itemRef.update({locations: allLocs});
-  await db.collection("transactions").add({
-    itemId, type: "adjust", adjustSign, qty, loc, batchDate: usedDate, date: todayStr(),
-    operator: currentUser.name, reason, editLog: [],
-    createdAt: new Date().toISOString()
+    firestoreTxn.update(itemRef, { locations: allLocs });
+
+    const txnRef = db.collection("transactions").doc();
+    firestoreTxn.set(txnRef, {
+      itemId, type:"adjust", adjustSign, qty, loc, batchDate: usedDate, date: todayStr(),
+      operator: currentUser.name, reason, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -384,81 +430,133 @@ function openEditTxnModal(txnId){
   });
 }
 
+// ============================================================
+// saveEditTxn（修改：atomic runTransaction + change log）
+// 注意：參數 t 是「進銷貨資料物件」，不是 Firestore transaction。
+//       Firestore transaction 變數命名為 firestoreTxn 以避免混淆。
+// ============================================================
 async function saveEditTxn(t, next){
-  const itemRef = db.collection("items").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
+  const itemRef     = db.collection("items").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
-    let oldBatches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
-    let oldIdx = oldBatches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null));
-    if(oldIdx < 0){ oldBatches.push({ qty: 0, productionDate: t.batchDate||null }); oldIdx = oldBatches.length-1; }
-    const oldSign = -txnSign(t);
-    oldBatches[oldIdx].qty = (oldBatches[oldIdx].qty||0) + t.qty*oldSign;
-    if(oldBatches[oldIdx].qty <= 0) oldBatches.splice(oldIdx, 1);
-    allLocs[t.loc] = oldBatches.filter(b=>b.qty>0);
-    if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
+  await db.runTransaction(async (firestoreTxn)=>{
+    // 所有讀取必須在寫入之前
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位／日期）
-    let newBatches = normalizeBatches(allLocs[next.loc], item).map(b=>({...b}));
-    let newIdx = newBatches.findIndex(b=> (b.productionDate||null) === (next.batchDate||null));
-    if(newIdx < 0){
-      if(txnSign(t) < 0){ throw new Error("這個儲位／批次目前沒有庫存，無法把這筆紀錄改到這裡，請確認儲位或生產日期"); }
-      newBatches.push({ qty: 0, productionDate: next.batchDate||null });
-      newIdx = newBatches.length-1;
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = {...(item.locations||{})};
+
+      // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
+      let oldBatches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
+      let oldIdx = oldBatches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null));
+      if(oldIdx < 0){ oldBatches.push({ qty: 0, productionDate: t.batchDate||null }); oldIdx = oldBatches.length-1; }
+      const oldSign = -txnSign(t);
+      oldBatches[oldIdx].qty = (oldBatches[oldIdx].qty||0) + t.qty*oldSign;
+      if(oldBatches[oldIdx].qty <= 0) oldBatches.splice(oldIdx, 1);
+      allLocs[t.loc] = oldBatches.filter(b=>b.qty>0);
+      if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
+
+      // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位／日期）
+      let newBatches = normalizeBatches(allLocs[next.loc], item).map(b=>({...b}));
+      let newIdx = newBatches.findIndex(b=> (b.productionDate||null) === (next.batchDate||null));
+      if(newIdx < 0){
+        if(txnSign(t) < 0){ throw new Error("這個儲位／批次目前沒有庫存，無法把這筆紀錄改到這裡，請確認儲位或生產日期"); }
+        newBatches.push({ qty: 0, productionDate: next.batchDate||null });
+        newIdx = newBatches.length-1;
+      }
+      const newSign = txnSign(t);
+      const resultQty = (newBatches[newIdx].qty||0) + next.qty*newSign;
+      if(newSign < 0 && resultQty < 0){
+        throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成 ${next.qty} 條`);
+      }
+      newBatches[newIdx].qty = resultQty;
+      if(newBatches[newIdx].qty <= 0) newBatches.splice(newIdx, 1);
+      allLocs[next.loc] = newBatches.filter(b=>b.qty>0);
+      if(allLocs[next.loc].length === 0) delete allLocs[next.loc];
+
+      firestoreTxn.update(itemRef, { locations: allLocs });
+
+      // change log（僅在品項存在時寫入）
+      firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+        itemId: t.itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
     }
-    const newSign = txnSign(t);
-    const resultQty = (newBatches[newIdx].qty||0) + next.qty*newSign;
-    if(newSign < 0 && resultQty < 0){
-      throw new Error(`這個儲位／批次目前只有 ${newBatches[newIdx].qty||0} 條，不夠改成 ${next.qty} 條`);
-    }
-    newBatches[newIdx].qty = resultQty;
-    if(newBatches[newIdx].qty <= 0) newBatches.splice(newIdx, 1);
-    allLocs[next.loc] = newBatches.filter(b=>b.qty>0);
-    if(allLocs[next.loc].length === 0) delete allLocs[next.loc];
-
-    await itemRef.update({ locations: allLocs });
-  }
-
-  await db.collection("transactions").doc(t.id).update({
-    date: next.date, qty: next.qty, loc: next.loc, batchDate: next.batchDate,
-    salesperson: next.salesperson, customerName: next.customerName,
-    editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, batchDate:t.batchDate||null, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-      after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName },
-      time: new Date().toISOString(), by: currentUser.name
-    })
+    // 不論品項是否存在，都更新進銷貨紀錄
+    firestoreTxn.update(db.collection("transactions").doc(t.id), {
+      date: next.date, qty: next.qty, loc: next.loc, batchDate: next.batchDate,
+      salesperson: next.salesperson, customerName: next.customerName,
+      editLog: firebase.firestore.FieldValue.arrayUnion({
+        before: { date:t.date||null, qty:t.qty, loc:t.loc, batchDate:t.batchDate||null, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+        after: { date:next.date, qty:next.qty, loc:next.loc, batchDate:next.batchDate, salesperson:next.salesperson, customerName:next.customerName },
+        time: new Date().toISOString(), by: currentUser.name
+      })
+    });
   });
 }
 
+// ============================================================
+// deleteTxn（修改：atomic runTransaction + change log）
+// ============================================================
 async function deleteTxn(txnId){
   const t = txnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
-  const itemRef = db.collection("items").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    let batches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
-    let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
-    if(idx < 0) idx = 0;
-    if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
-    const sign = -txnSign(t);
-    batches[idx].qty = (batches[idx].qty||0) + t.qty*sign;
-    if(batches[idx].qty <= 0) batches.splice(idx, 1);
-    allLocs[t.loc] = batches.filter(b=>b.qty>0);
-    if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
-    await itemRef.update({locations: allLocs});
+
+  const itemRef     = db.collection("items").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
+
+  try {
+    await db.runTransaction(async (firestoreTxn)=>{
+      const [itemSnap, settingsSnap] = await Promise.all([
+        firestoreTxn.get(itemRef),
+        firestoreTxn.get(settingsRef)
+      ]);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      if(itemSnap.exists){
+        const item = itemSnap.data();
+        const allLocs = {...(item.locations||{})};
+        let batches = normalizeBatches(allLocs[t.loc], item).map(b=>({...b}));
+        let idx = ("batchDate" in t) ? batches.findIndex(b=> (b.productionDate||null) === (t.batchDate||null)) : 0;
+        if(idx < 0) idx = 0;
+        if(batches.length === 0){ batches.push({ qty: 0, productionDate: t.batchDate||null }); idx = 0; }
+        const sign = -txnSign(t);
+        batches[idx].qty = (batches[idx].qty||0) + t.qty*sign;
+        if(batches[idx].qty <= 0) batches.splice(idx, 1);
+        allLocs[t.loc] = batches.filter(b=>b.qty>0);
+        if(allLocs[t.loc].length === 0) delete allLocs[t.loc];
+
+        firestoreTxn.update(itemRef, { locations: allLocs });
+
+        // change log（僅在品項存在時寫入）
+        firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+          itemId: t.itemId, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+      }
+
+      // editLogs + 刪除進銷貨紀錄
+      firestoreTxn.set(db.collection("editLogs").doc(), {
+        txnId, action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+      });
+      firestoreTxn.delete(db.collection("transactions").doc(txnId));
+    });
+  } catch(e){
+    alert("刪除失敗："+e.message);
   }
-  await db.collection("editLogs").add({
-    txnId, action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
-  });
-  await db.collection("transactions").doc(txnId).delete();
 }
 
+// ============================================================
+// 新增品項（修改：atomic runTransaction + change log）
+// ============================================================
 function openNewItemModal(){
   const brandOptions = brandsCache.length ? brandsCache : DEFAULT_BRANDS;
   const html = `
@@ -488,13 +586,34 @@ function openNewItemModal(){
     }
   });
   document.getElementById("newItemSubmitBtn").addEventListener("click", async ()=>{
-    const brand = document.getElementById("newItemBrand").value;
-    const model = document.getElementById("newItemModel").value.trim();
-    const spec = document.getElementById("newItemSpec").value.trim();
+    const brand  = document.getElementById("newItemBrand").value;
+    const model  = document.getElementById("newItemModel").value.trim();
+    const spec   = document.getElementById("newItemSpec").value.trim();
     const remark = document.getElementById("newItemRemark").value.trim();
     if(!spec){ alert("請輸入規格"); return; }
-    await db.collection("items").add({brand, model, spec, remark, locations:{}, twenty:null, sellPrice:null});
-    closeModal();
+
+    // 修改：atomic runTransaction + change log
+    // 預先建立 ref 以在 transaction 中使用 set（而非 add）
+    const itemRef     = db.collection("items").doc();
+    const settingsRef = db.collection("settings").doc("tireCache");
+    try {
+      await db.runTransaction(async (firestoreTxn)=>{
+        const settingsSnap = await firestoreTxn.get(settingsRef);
+        const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+        firestoreTxn.set(itemRef, { brand, model, spec, remark, locations:{}, twenty:null, sellPrice:null });
+
+        firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+          itemId: itemRef.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+      });
+      closeModal();
+    } catch(e){
+      alert("建立失敗："+e.message);
+    }
   });
 }
 
@@ -585,9 +704,11 @@ function openConfirmOrderModal(orderId){
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這一批目前只有 ${opt.qty} 條，不夠出 ${order.qty} 條，請選別批，或先用「修改」調整這筆訂單的數量`); return; }
     try{
-      const txnRef = await submitOrderTxn(order, opt.code, opt.date);
+      // submitOrderTxn 內含 items 更新 + change log（runTransaction）
+      const txnId = await submitOrderTxn(order, opt.code, opt.date);
+      // orders 更新不異動 items → 不需要 change log，獨立 update 即可
       await db.collection("orders").doc(order.id).update({
-        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
+        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnId
       });
       closeModal();
     }catch(e){
@@ -596,29 +717,56 @@ function openConfirmOrderModal(orderId){
   });
 }
 
+// ============================================================
+// submitOrderTxn（修改：atomic runTransaction + change log）
+// 回傳新建立的 transactions 文件 ID（供 openConfirmOrderModal 記錄 linkedTxnId）
+// ============================================================
 async function submitOrderTxn(order, loc, batchDate){
-  const itemRef = db.collection("items").doc(order.itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
-  const targetDate = batchDate || null;
-  const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
-  if(idx < 0) throw new Error("找不到指定的批次，請重新整理頁面再試一次");
-  if(batches[idx].qty < order.qty) throw new Error("這一批庫存不足，請重新選擇");
-  batches[idx].qty -= order.qty;
-  if(batches[idx].qty <= 0) batches.splice(idx, 1);
-  allLocs[loc] = batches.filter(b=>b.qty>0);
-  if(allLocs[loc].length === 0) delete allLocs[loc];
-  await itemRef.update({locations: allLocs});
-  return await db.collection("transactions").add({
-    itemId: order.itemId, type: "out", qty: order.qty, loc, batchDate: targetDate,
-    date: todayStr(), operator: currentUser.name,
-    salesperson: order.requestedByName || "", customerName: order.customerName || "",
-    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-    orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("items").doc(order.itemId);
+  const settingsRef = db.collection("settings").doc("tireCache");
+  let newTxnId = null;
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    let batches = normalizeBatches(allLocs[loc], item).map(b=>({...b}));
+    const targetDate = batchDate || null;
+    const idx = batches.findIndex(b=> (b.productionDate||null) === targetDate);
+    if(idx < 0) throw new Error("找不到指定的批次，請重新整理頁面再試一次");
+    if(batches[idx].qty < order.qty) throw new Error("這一批庫存不足，請重新選擇");
+    batches[idx].qty -= order.qty;
+    if(batches[idx].qty <= 0) batches.splice(idx, 1);
+    allLocs[loc] = batches.filter(b=>b.qty>0);
+    if(allLocs[loc].length === 0) delete allLocs[loc];
+
+    firestoreTxn.update(itemRef, { locations: allLocs });
+
+    const txnRef = db.collection("transactions").doc();
+    newTxnId = txnRef.id;
+    firestoreTxn.set(txnRef, {
+      itemId: order.itemId, type:"out", qty: order.qty, loc, batchDate: targetDate,
+      date: todayStr(), operator: currentUser.name,
+      salesperson: order.requestedByName || "", customerName: order.customerName || "",
+      customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+      orderId: order.id, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("tireItemChanges").doc(), {
+      itemId: order.itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
+
+  return newTxnId;
 }
 
 function openEditOrderModal(orderId){
@@ -674,6 +822,7 @@ function openEditOrderModal(orderId){
     }));
   });
 
+  // 修改訂單：只改 orders 文件，不異動 items → 不需要 change log
   document.getElementById("editOrderSaveBtn").addEventListener("click", async ()=>{
     const qty = Number(document.getElementById("editOrderQty").value);
     const customerName = document.getElementById("editOrderCustomerName").value.trim();
@@ -696,6 +845,7 @@ function openEditOrderModal(orderId){
   });
 }
 
+// cancelOrder：只更新 orders 文件狀態，不異動 items → 不需要 change log
 function cancelOrder(orderId){
   if(!confirm("確定要取消這筆訂單嗎？")) return;
   db.collection("orders").doc(orderId).update({
