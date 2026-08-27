@@ -42,10 +42,7 @@ function renderPadQuery(){
   const q = norm(document.getElementById("padQueryBox").value);
 
   let list = padItemsCache.slice();
-  if(q) list = list.filter(it=>
-    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
-    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
-  );
+  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||"" ),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
   const padQuerySortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padQuerySortRank(a) - padQuerySortRank(b)) || padCompareItems(a,b));
 
@@ -176,10 +173,7 @@ document.getElementById("padMasterBox").addEventListener("input", renderPadMaste
 function renderPadMaster(){
   const q = norm(document.getElementById("padMasterBox").value);
   let list = padItemsCache.slice();
-  if(q) list = list.filter(it=>
-    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
-    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
-  );
+  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||""),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
   const padMasterSortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padMasterSortRank(a) - padMasterSortRank(b)) || padCompareItems(a,b));
 

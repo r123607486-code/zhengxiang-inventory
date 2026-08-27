@@ -9,7 +9,7 @@ function renderQuery(){
   const q = norm(document.getElementById("queryBox").value);
 
   let list = itemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
+  if(q){ const qNoR=q.replace(/R/g,""); list=list.filter(it=>{ const sp=norm(it.spec),mo=norm(it.model||""),br=norm(it.brand); return sp.includes(q)||mo.includes(q)||br.includes(q)||sp.replace(/R/g,"").includes(qNoR)||mo.replace(/R/g,"").includes(qNoR)||br.replace(/R/g,"").includes(qNoR); }); }
   const sortRank = (it)=> hasPendingStock(it) ? 0 : (totalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> sortRank(a) - sortRank(b));
 
@@ -121,7 +121,7 @@ function renderMaster(){
   const q = norm(document.getElementById("masterBox").value);
 
   let list = itemsCache.slice();
-  if(q) list = list.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q) || norm(it.brand).includes(q));
+  if(q){ const qNoR=q.replace(/R/g,""); list=list.filter(it=>{ const sp=norm(it.spec),mo=norm(it.model||""),br=norm(it.brand); return sp.includes(q)||mo.includes(q)||br.includes(q)||sp.replace(/R/g,"").includes(qNoR)||mo.replace(/R/g,"").includes(qNoR)||br.replace(/R/g,"").includes(qNoR); }); }
   const masterSortRank = (it)=> hasPendingStock(it) ? 0 : (totalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> masterSortRank(a) - masterSortRank(b));
 
