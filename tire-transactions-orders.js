@@ -111,7 +111,7 @@ function openTxnModal(){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("txnItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    const qNoR=q.replace(/R/g,""); const matches = itemsCache.filter(it=>{ const sp=norm(it.spec),mo=norm(it.model||""); return sp.includes(q)||mo.includes(q)||sp.replace(/R/g,"").includes(qNoR)||mo.replace(/R/g,"").includes(qNoR); }).slice(0,15);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
@@ -281,7 +281,7 @@ function openAdjustTxnModal(){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("adjustItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    const qNoR=q.replace(/R/g,""); const matches = itemsCache.filter(it=>{ const sp=norm(it.spec),mo=norm(it.model||""); return sp.includes(q)||mo.includes(q)||sp.replace(/R/g,"").includes(qNoR)||mo.replace(/R/g,"").includes(qNoR); }).slice(0,15);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
@@ -809,7 +809,7 @@ function openEditOrderModal(orderId){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("editOrderItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = itemsCache.filter(it=> norm(it.spec).includes(q) || norm(it.model).includes(q)).slice(0,15);
+    const qNoR=q.replace(/R/g,""); const matches = itemsCache.filter(it=>{ const sp=norm(it.spec),mo=norm(it.model||""); return sp.includes(q)||mo.includes(q)||sp.replace(/R/g,"").includes(qNoR)||mo.replace(/R/g,"").includes(qNoR); }).slice(0,15);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(it.brand)}　${escapeHtml(it.spec)}（${escapeHtml(it.model||"")}）</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
