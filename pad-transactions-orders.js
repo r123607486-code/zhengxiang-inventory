@@ -84,10 +84,7 @@ function buildPadItemSearch(searchId, listId, labelId, onSelect){
     const q = norm(searchInput.value);
     const listEl = document.getElementById(listId);
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = padItemsCache.filter(it=>
-      norm(it.carModel).includes(q) || norm(it.spec).includes(q) ||
-      norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
-    ).slice(0,15);
+    const qNoH=q.replace(/-/g,""); const matches = padItemsCache.filter(it=>{ const cm=norm(it.carModel),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }).slice(0,15);
     listEl.innerHTML = matches.map(it=>{
       const pn = [it.partNoFront, it.partNoRear].filter(Boolean).join(" / ");
       return `<div data-id="${it.id}">${escapeHtml(padItemLabel(it))}${pn?` <span style="color:var(--muted);font-size:12px;">[${escapeHtml(pn)}]</span>`:"" }</div>`;
