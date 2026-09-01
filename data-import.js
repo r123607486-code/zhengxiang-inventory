@@ -27,16 +27,20 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, {type:"array"});
 
+  // 1. 完整交接備份還原
   if(wb.Sheets["交接資訊"]){
     await restoreHandoverBackup(wb, statusEl);
     return;
   }
+  // 2. 舊版完整備份還原
   if(wb.Sheets["品項主檔"] && wb.Sheets["儲位主檔"]){
     await restoreFullBackup(wb, statusEl);
     return;
   }
-
+  // 3. 賽輪廠商總表
   if(await tryImportSailunSheet(wb, statusEl)) return;
+  // 4. 庫存總表格式（品牌/型號/規格/20%/售價/備註）→ 新增或更新輪胎品項，庫存不動
+  if(await tryImportTireListSheet(wb, statusEl)) return;
 
   const knownLocationCodes = new Set(locationsCache.map(l=>l.code));
   const newItems = [];
@@ -201,6 +205,54 @@ async function tryImportSailunSheet(wb, statusEl){
   return true;
 }
 
+// 庫存總表格式：工作表名稱「資料」，含「品牌」「規格」欄位
+// 行為：以上傳的 Excel 為準，更新品牌/型號/規格/20%/售價/備註；庫存與儲位完全不動
+async function tryImportTireListSheet(wb, statusEl){
+  const ws = wb.Sheets["資料"];
+  if(!ws) return false;
+  const rows = XLSX.utils.sheet_to_json(ws, {defval:""});
+  if(!rows.length) return false;
+  const first = rows[0];
+  if(!("品牌" in first) || !("規格" in first)) return false;
+
+  const toNum = (v)=> (v===null||v===undefined||v==="") ? null : Number(v);
+  statusEl.textContent = `偵測到庫存總表格式，共 ${rows.length} 筆，更新中...`;
+
+  let created = 0, updated = 0;
+  let batch = db.batch();
+  let opCount = 0;
+
+  for(const r of rows){
+    const brand = (r["品牌"]||"").toString().trim();
+    const model = (r["型號"]||"").toString().trim();
+    const spec  = (r["規格"]||"").toString().trim();
+    if(!brand && !spec) continue;
+    const twenty    = toNum(r["20%"]);
+    const sellPrice = toNum(r["售價"]);
+    const remark    = (r["備註"]||"").toString().trim();
+
+    const existing = itemsCache.find(it=>
+      norm(it.brand)===norm(brand) &&
+      norm(it.model||"")===norm(model) &&
+      norm(it.spec)===norm(spec)
+    );
+
+    if(existing){
+      batch.update(db.collection("items").doc(existing.id), {brand, model, spec, twenty, sellPrice, remark});
+      updated++;
+    } else {
+      batch.set(db.collection("items").doc(), {brand, model, spec, remark, locations:{}, twenty, sellPrice});
+      created++;
+    }
+    opCount++;
+    if(opCount>=400){ await batch.commit(); batch=db.batch(); opCount=0; }
+  }
+  if(opCount>0) await batch.commit();
+
+  statusEl.textContent = `庫存總表更新完成！新增 ${created} 筆、更新 ${updated} 筆（庫存與儲位不受影響）。`;
+  return true;
+}
+
 // 偵測KYB報價單格式：支援新版（避震款式/廠牌/車型/年份代碼/料號/保修廠價/一線消費者售價）
 // 跟舊版（車型/訂價/牌價/保修廠）兩種表頭，新版優先判斷。
 function detectKybSheet(wb){
@@ -269,10 +321,7 @@ async function tryImportKybSheet(wb, statusEl){
       const modelRaw = row[modelIdx];
       const modelStr = (modelRaw==null?"":modelRaw).toString().trim();
       if(!modelStr) return;
-      // 報價單常常在車型欄下方接一段免責聲明／注意事項文字（跟車型同一欄），
-      // 車型名稱通常很短，這種備註文字明顯很長，用長度判斷跳過，避免被誤當成車型匯入。
       if(modelStr.length > 30){ skippedNoteCount++; return; }
-      // 舊格式沒有避震款式欄位，一律視為白桶（沿用原本白桶車型的匯入方式）
       const key = norm(modelStr) + "|白桶";
       merged.set(key, {
         carModel: modelStr,
@@ -280,7 +329,6 @@ async function tryImportKybSheet(wb, statusEl){
         carMake: "",
         yearCode: "",
         partNo: "",
-        // 訂價欄位不再使用；牌價視同一線消費者售價
         catalogPrice: toNum(row[catalogIdx]) != null ? toNum(row[catalogIdx]) : toNum(row[listIdx]),
         warrantyPrice: warrantyIdx>=0 ? toNum(row[warrantyIdx]) : null,
         remark: ""
