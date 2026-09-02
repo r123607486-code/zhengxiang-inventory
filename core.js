@@ -94,12 +94,28 @@ function salespersonFieldHtml(id, val){
 // 輪胎庫存工具
 // ============================================================
 function qtyByLoc(item){
+  const locs = item.locations;
+  if(!locs) return {};
+  if(Array.isArray(locs)){
+    const m = {};
+    locs.forEach(l=>{ m[l.code] = (m[l.code]||0) + l.qty; });
+    return m;
+  }
   const m = {};
-  (item.locations||[]).forEach(l=>{ m[l.code] = (m[l.code]||0) + l.qty; });
+  Object.entries(locs).forEach(([code, val])=>{
+    if(Array.isArray(val)) m[code] = val.reduce((s,b)=>s+(Number(b.qty)||0), 0);
+    else m[code] = Number(val)||0;
+  });
   return m;
 }
 function totalQty(item){
-  return (item.locations||[]).reduce((s,l)=>s+l.qty, 0);
+  const locs = item.locations;
+  if(!locs) return 0;
+  if(Array.isArray(locs)) return locs.reduce((s,l)=>s+l.qty, 0);
+  return Object.values(locs).reduce((s,val)=>{
+    if(Array.isArray(val)) return s + val.reduce((ss,b)=>ss+(Number(b.qty)||0), 0);
+    return s + (Number(val)||0);
+  }, 0);
 }
 function itemLabel(item){
   return [item.brand, item.model, item.spec].filter(Boolean).join(" ");
@@ -332,11 +348,11 @@ function renderTabs(){
   const nav = document.getElementById("tabs");
   const visible = currentTabDefs().filter(t=>t.roles.includes(currentUser.role));
   nav.innerHTML = visible.map((t,i)=>
-    `<button data-tab="${t.id}" class="${i===0?'active':''}">` +
-    `${t.icon}${t.label}` +
-    `${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}` +
-    `${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}` +
-    `${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}` +
+    `<button data-tab="${t.id}" class="${i===0?'active':''}">`+
+    `${t.icon}${t.label}`+
+    `${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}`+
+    `${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}`+
+    `${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}`+
     `</button>`
   ).join("");
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
@@ -726,12 +742,17 @@ function renderMasterTable(){
     const locChips = Object.entries(locMap).map(([code,qty])=>{
       let expired = false;
       if(_expireYears !== null){
-        const loc = (item.locations||[]).find(l=>l.code===code);
-        if(loc && loc.mfgDate){
-          const mfg = new Date(loc.mfgDate + "-01");
-          const diffYears = (now - mfg) / (1000*60*60*24*365.25);
-          if(diffYears >= _expireYears) expired = true;
-        }
+        const batches = Array.isArray(item.locations?.[code]) ? item.locations[code] : [];
+        const anyExpired = batches.some(b=>{
+          if(!b.productionDate) return false;
+          const dot = String(b.productionDate);
+          if(dot.length < 4) return false;
+          const week = parseInt(dot.slice(0,2),10);
+          const year = 2000 + parseInt(dot.slice(2,4),10);
+          const mfg = new Date(year, 0, 1 + (week-1)*7);
+          return (now - mfg)/(1000*60*60*24*365.25) >= _expireYears;
+        });
+        if(anyExpired) expired = true;
       }
       return `<span class="loc-chip ${expired?'expired':''}" style="cursor:pointer" data-item-id="${item.id}" data-loc-code="${escapeHtml(code)}">${escapeHtml(code)}: ${qty}</span>`;
     }).join("");
