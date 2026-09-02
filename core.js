@@ -66,6 +66,16 @@ let _stopTireOrdersListener = null;   // 訂單 lazy listener 的停止函式（
 let tirePendingOrdersCount = 0;       // 待確認訂單數（來自輕量監聽器）
 
 // ============================================================
+// KYB READ 最佳化狀態（IndexedDB + 序號差異同步）
+// ============================================================
+let _kybIdb = null;                   // KYB IndexedDB 連線實例
+
+// ============================================================
+// 來令片 READ 最佳化狀態（IndexedDB + 序號差異同步）
+// ============================================================
+let _padIdb = null;                   // 來令片 IndexedDB 連線實例
+
+// ============================================================
 // IndexedDB 工具函式
 // DB: "zhx-inv" v1
 // Store "tireItems": keyPath "id"  → 輪胎品項物件
@@ -251,6 +261,314 @@ async function deltaSyncTireItems(localSeq, remoteSeq){
     }
     await idbPutAll(_tireIdb, "tireMeta", [{ key:"sync", changeSequence:remoteSeq }]);
   }
+}
+
+// ============================================================
+// KYB IndexedDB 工具函式
+// DB: "zhx-kyb" v1
+// Store "kybItems": keyPath "id"  → KYB 品項物件
+// Store "kybMeta":  keyPath "key" → { key:"sync", changeSequence:number }
+// ============================================================
+const _KYB_IDB_NAME = "zhx-kyb";
+const _KYB_IDB_VERSION = 1;
+
+function openKybIDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(_KYB_IDB_NAME, _KYB_IDB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const idb = e.target.result;
+      if(!idb.objectStoreNames.contains("kybItems"))
+        idb.createObjectStore("kybItems", { keyPath:"id" });
+      if(!idb.objectStoreNames.contains("kybMeta"))
+        idb.createObjectStore("kybMeta", { keyPath:"key" });
+    };
+    req.onsuccess = (e)=>resolve(e.target.result);
+    req.onerror  = (e)=>reject(e.target.error);
+  });
+}
+
+// ============================================================
+// KYB 品項初始化（IndexedDB 快取 + sequence 差異同步）
+// ============================================================
+async function initKybItems(){
+  try {
+    _kybIdb = await openKybIDB();
+    const [localItems, localMeta] = await Promise.all([
+      idbGetAll(_kybIdb, "kybItems"),
+      idbGet(_kybIdb, "kybMeta", "sync")
+    ]);
+    const localSeq = localMeta ? (localMeta.changeSequence || 0) : 0;
+
+    if(localItems.length > 0){
+      kybItemsCache = localItems;
+      renderKybQuery(); renderKybMaster();
+    }
+
+    const markerSnap = await db.collection("settings").doc("kybCache").get();
+    const remoteSeq  = markerSnap.exists ? (markerSnap.data().changeSequence || 0) : 0;
+
+    if(remoteSeq === localSeq && localItems.length > 0){
+      console.log("[KYB] IDB 快取已是最新（seq=" + localSeq + "），略過讀取");
+    } else if(localItems.length === 0 || localSeq === 0){
+      await fullReadKybItems(remoteSeq);
+    } else {
+      await deltaSyncKybItems(localSeq, remoteSeq);
+    }
+  } catch(e){
+    console.error("[KYB] IDB 初始化失敗，改用全讀取：", e);
+    _kybIdb = null;
+    try {
+      const snap = await db.collection("kybItems").get();
+      kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderKybQuery(); renderKybMaster();
+    } catch(e2){
+      console.error("[KYB] 全讀取也失敗：", e2);
+    }
+  }
+}
+
+async function fullReadKybItems(remoteSeq){
+  const snap = await db.collection("kybItems").get();
+  kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderKybQuery(); renderKybMaster();
+  if(_kybIdb){
+    await idbClearAll(_kybIdb, "kybItems");
+    await idbPutAll(_kybIdb, "kybItems", kybItemsCache);
+    await idbPutAll(_kybIdb, "kybMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+async function deltaSyncKybItems(localSeq, remoteSeq){
+  const changesSnap = await db.collection("kybItemChanges")
+    .where("changeSequence", ">", localSeq)
+    .orderBy("changeSequence", "asc")
+    .get();
+
+  if(changesSnap.empty){
+    if(_kybIdb){
+      await idbPutAll(_kybIdb, "kybMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+    }
+    return;
+  }
+
+  const itemActions = new Map();
+  changesSnap.docs.forEach(d=>{
+    const { itemId, action } = d.data();
+    itemActions.set(itemId, action);
+  });
+
+  const idsToFetch  = [];
+  const idsToDelete = [];
+  itemActions.forEach((action, itemId)=>{
+    if(action === "delete") idsToDelete.push(itemId);
+    else idsToFetch.push(itemId);
+  });
+
+  const fetchedItems = [];
+  for(let i = 0; i < idsToFetch.length; i += 10){
+    const batch = idsToFetch.slice(i, i + 10);
+    const snaps = await Promise.all(batch.map(id=>db.collection("kybItems").doc(id).get()));
+    snaps.forEach(s=>{ if(s.exists) fetchedItems.push({ id:s.id, ...s.data() }); });
+  }
+
+  idsToDelete.forEach(id=>{ kybItemsCache = kybItemsCache.filter(it=>it.id !== id); });
+  fetchedItems.forEach(item=>{
+    const idx = kybItemsCache.findIndex(it=>it.id === item.id);
+    if(idx >= 0) kybItemsCache[idx] = item;
+    else kybItemsCache.push(item);
+  });
+
+  renderKybQuery(); renderKybMaster();
+
+  if(_kybIdb){
+    if(idsToDelete.length > 0){
+      await Promise.all(idsToDelete.map(id=>idbDelete(_kybIdb, "kybItems", id)));
+    }
+    if(fetchedItems.length > 0){
+      await idbPutAll(_kybIdb, "kybItems", fetchedItems);
+    }
+    await idbPutAll(_kybIdb, "kybMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+// ============================================================
+// KYB marker 監聽器
+// ============================================================
+function startKybMarkerListener(){
+  startRealtimeListener(
+    ()=>db.collection("settings").doc("kybCache"),
+    async (snap)=>{
+      if(!snap.exists) return;
+      const remoteSeq = snap.data().changeSequence || 0;
+      let localSeq = 0;
+      if(_kybIdb){
+        const meta = await idbGet(_kybIdb, "kybMeta", "sync");
+        localSeq = meta ? (meta.changeSequence || 0) : 0;
+      }
+      if(remoteSeq > localSeq){
+        try {
+          await deltaSyncKybItems(localSeq, remoteSeq);
+        } catch(e){
+          console.error("[KYB] marker 差異同步失敗：", e);
+        }
+      }
+    },
+    "KYB快取標記"
+  );
+}
+
+// ============================================================
+// 來令片 IndexedDB 工具函式
+// DB: "zhx-pad" v1
+// Store "padItems": keyPath "id"  → 來令片品項物件
+// Store "padMeta":  keyPath "key" → { key:"sync", changeSequence:number }
+// ============================================================
+const _PAD_IDB_NAME = "zhx-pad";
+const _PAD_IDB_VERSION = 1;
+
+function openPadIDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(_PAD_IDB_NAME, _PAD_IDB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const idb = e.target.result;
+      if(!idb.objectStoreNames.contains("padItems"))
+        idb.createObjectStore("padItems", { keyPath:"id" });
+      if(!idb.objectStoreNames.contains("padMeta"))
+        idb.createObjectStore("padMeta", { keyPath:"key" });
+    };
+    req.onsuccess = (e)=>resolve(e.target.result);
+    req.onerror  = (e)=>reject(e.target.error);
+  });
+}
+
+// ============================================================
+// 來令片品項初始化（IndexedDB 快取 + sequence 差異同步）
+// ============================================================
+async function initPadItems(){
+  try {
+    _padIdb = await openPadIDB();
+    const [localItems, localMeta] = await Promise.all([
+      idbGetAll(_padIdb, "padItems"),
+      idbGet(_padIdb, "padMeta", "sync")
+    ]);
+    const localSeq = localMeta ? (localMeta.changeSequence || 0) : 0;
+
+    if(localItems.length > 0){
+      padItemsCache = localItems;
+      renderPadQuery(); renderPadMaster();
+    }
+
+    const markerSnap = await db.collection("settings").doc("padCache").get();
+    const remoteSeq  = markerSnap.exists ? (markerSnap.data().changeSequence || 0) : 0;
+
+    if(remoteSeq === localSeq && localItems.length > 0){
+      console.log("[來令片] IDB 快取已是最新（seq=" + localSeq + "），略過讀取");
+    } else if(localItems.length === 0 || localSeq === 0){
+      await fullReadPadItems(remoteSeq);
+    } else {
+      await deltaSyncPadItems(localSeq, remoteSeq);
+    }
+  } catch(e){
+    console.error("[來令片] IDB 初始化失敗，改用全讀取：", e);
+    _padIdb = null;
+    try {
+      const snap = await db.collection("padItems").get();
+      padItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      renderPadQuery(); renderPadMaster();
+    } catch(e2){
+      console.error("[來令片] 全讀取也失敗：", e2);
+    }
+  }
+}
+
+async function fullReadPadItems(remoteSeq){
+  const snap = await db.collection("padItems").get();
+  padItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderPadQuery(); renderPadMaster();
+  if(_padIdb){
+    await idbClearAll(_padIdb, "padItems");
+    await idbPutAll(_padIdb, "padItems", padItemsCache);
+    await idbPutAll(_padIdb, "padMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+async function deltaSyncPadItems(localSeq, remoteSeq){
+  const changesSnap = await db.collection("padItemChanges")
+    .where("changeSequence", ">", localSeq)
+    .orderBy("changeSequence", "asc")
+    .get();
+
+  if(changesSnap.empty){
+    if(_padIdb){
+      await idbPutAll(_padIdb, "padMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+    }
+    return;
+  }
+
+  const itemActions = new Map();
+  changesSnap.docs.forEach(d=>{
+    const { itemId, action } = d.data();
+    itemActions.set(itemId, action);
+  });
+
+  const idsToFetch  = [];
+  const idsToDelete = [];
+  itemActions.forEach((action, itemId)=>{
+    if(action === "delete") idsToDelete.push(itemId);
+    else idsToFetch.push(itemId);
+  });
+
+  const fetchedItems = [];
+  for(let i = 0; i < idsToFetch.length; i += 10){
+    const batch = idsToFetch.slice(i, i + 10);
+    const snaps = await Promise.all(batch.map(id=>db.collection("padItems").doc(id).get()));
+    snaps.forEach(s=>{ if(s.exists) fetchedItems.push({ id:s.id, ...s.data() }); });
+  }
+
+  idsToDelete.forEach(id=>{ padItemsCache = padItemsCache.filter(it=>it.id !== id); });
+  fetchedItems.forEach(item=>{
+    const idx = padItemsCache.findIndex(it=>it.id === item.id);
+    if(idx >= 0) padItemsCache[idx] = item;
+    else padItemsCache.push(item);
+  });
+
+  renderPadQuery(); renderPadMaster();
+
+  if(_padIdb){
+    if(idsToDelete.length > 0){
+      await Promise.all(idsToDelete.map(id=>idbDelete(_padIdb, "padItems", id)));
+    }
+    if(fetchedItems.length > 0){
+      await idbPutAll(_padIdb, "padItems", fetchedItems);
+    }
+    await idbPutAll(_padIdb, "padMeta", [{ key:"sync", changeSequence:remoteSeq }]);
+  }
+}
+
+// ============================================================
+// 來令片 marker 監聽器
+// ============================================================
+function startPadMarkerListener(){
+  startRealtimeListener(
+    ()=>db.collection("settings").doc("padCache"),
+    async (snap)=>{
+      if(!snap.exists) return;
+      const remoteSeq = snap.data().changeSequence || 0;
+      let localSeq = 0;
+      if(_padIdb){
+        const meta = await idbGet(_padIdb, "padMeta", "sync");
+        localSeq = meta ? (meta.changeSequence || 0) : 0;
+      }
+      if(remoteSeq > localSeq){
+        try {
+          await deltaSyncPadItems(localSeq, remoteSeq);
+        } catch(e){
+          console.error("[來令片] marker 差異同步失敗：", e);
+        }
+      }
+    },
+    "來令片快取標記"
+  );
 }
 
 // ============================================================
@@ -566,6 +884,9 @@ function resetSessionState(){
   _stopTireTxnListener = null;
   _stopTireOrdersListener = null;
   tirePendingOrdersCount = 0;
+  // KYB / 來令片最佳化狀態清除
+  _kybIdb = null;
+  _padIdb = null;
   const backupBanner = document.getElementById("backupBanner");
   if(backupBanner) backupBanner.classList.add("hidden");
   const ordersBanner = document.getElementById("ordersBanner");
@@ -670,7 +991,7 @@ function buildTabs(){
   const nav = document.getElementById("tabs");
   const visible = currentTabDefs().filter(t=>t.roles.includes(currentUser.role));
   nav.innerHTML = visible.map((t,i)=>
-    `<button data-tab="${t.id}" class="${i===0?'active':''}">${ t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}</button>`
+    `<button data-tab="${t.id}" class="${i===0?'active':'''}">${t.icon}${t.label}${t.id==='orders'?'<span class="badge-dot hidden" id="ordersTabBadge">0</span>':''}${t.id==='kyb-orders'?'<span class="badge-dot hidden" id="kybOrdersTabBadge">0</span>':''}${t.id==='pad-orders'?'<span class="badge-dot hidden" id="padOrdersTabBadge">0</span>':''}</button>`
   ).join("");
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+visible[0].id).classList.add("active");
@@ -825,10 +1146,10 @@ function startTireListeners(){
 }
 
 function startKybListeners(){
-  startRealtimeListener(()=>db.collection("kybItems"), snap=>{
-    kybItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderKybQuery(); renderKybMaster();
-  }, "KYB品項");
+  // 品項：IndexedDB 快取 + sequence marker 監聽器（取代原本全量 kybItems onSnapshot）
+  initKybItems();
+  startKybMarkerListener();
+
   startRealtimeListener(()=>db.collection("kybLocations"), snap=>{
     kybLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderKybLocations();
@@ -860,10 +1181,10 @@ function startKybListeners(){
 }
 
 function startPadListeners(){
-  startRealtimeListener(()=>db.collection("padItems"), snap=>{
-    padItemsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderPadQuery(); renderPadMaster();
-  }, "來令片品項");
+  // 品項：IndexedDB 快取 + sequence marker 監聽器（取代原本全量 padItems onSnapshot）
+  initPadItems();
+  startPadMarkerListener();
+
   startRealtimeListener(()=>db.collection("padLocations"), snap=>{
     padLocationsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     renderPadLocations();
