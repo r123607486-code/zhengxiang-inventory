@@ -169,22 +169,27 @@ async function doLogin(){
   errEl.textContent = "";
   if(!username||!password){ errEl.textContent="請輸入帳號和密碼"; return; }
   try{
+    await auth.signInWithEmailAndPassword(username + '@' + INTERNAL_EMAIL_DOMAIN, password);
     const snap = await db.collection("users").where("username","==",username).get();
-    if(snap.empty){ errEl.textContent="帳號或密碼錯誤"; return; }
+    if(snap.empty){ await auth.signOut(); errEl.textContent="帳號或密碼錯誤"; return; }
     const userDoc = snap.docs[0];
     const data = userDoc.data();
-    if(data.password !== password){ errEl.textContent="帳號或密碼錯誤"; return; }
-    if(data.active === false){ errEl.textContent="此帳號已停用，請聯絡管理者"; return; }
-    currentUser = { uid: userDoc.id, name: data.name, role: data.role };
+    if(data.active === false){ await auth.signOut(); errEl.textContent="此帳號已停用，請聯絡管理者"; return; }
+    currentUser = { uid: userDoc.id, name: data.name, role: data.role, username: username };
     document.getElementById("splash").classList.add("hidden");
     showCategoryScreen();
   }catch(e){
     console.error("登入錯誤", e);
-    errEl.textContent = "登入失敗，請檢查網路連線";
+    if(e.code==="auth/wrong-password"||e.code==="auth/user-not-found"||e.code==="auth/invalid-credential"||e.code==="auth/invalid-email"){
+      errEl.textContent="帳號或密碼錯誤";
+    } else {
+      errEl.textContent = "登入失敗，請檢查網路連線";
+    }
   }
 }
 
 function doLogout(){
+  auth.signOut();
   stopAllListeners();
   currentUser = null;
   currentCategory = null;
@@ -218,11 +223,22 @@ document.getElementById("changePwBtn").addEventListener("click", ()=>{
     const cf  = document.getElementById("confirmPwInput").value;
     if(!old||!nw){ alert("請填寫所有欄位"); return; }
     if(nw !== cf){ alert("新密碼與確認不一致"); return; }
-    const snap = await db.collection("users").doc(currentUser.uid).get();
-    if(!snap.exists||snap.data().password!==old){ alert("舊密碼錯誤"); return; }
-    await db.collection("users").doc(currentUser.uid).update({password:nw});
-    alert("密碼已修改成功");
-    closeModal();
+    try{
+      const credential = firebase.auth.EmailAuthProvider.credential(
+        currentUser.username + '@' + INTERNAL_EMAIL_DOMAIN, old
+      );
+      await auth.currentUser.reauthenticateWithCredential(credential);
+      await auth.currentUser.updatePassword(nw);
+      await db.collection("users").doc(currentUser.uid).update({password:nw});
+      alert("密碼已修改成功");
+      closeModal();
+    }catch(e){
+      if(e.code==="auth/wrong-password"||e.code==="auth/invalid-credential"){
+        alert("舊密碼錯誤");
+      } else {
+        alert("修改失敗："+e.message);
+      }
+    }
   });
 });
 
