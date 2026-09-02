@@ -42,7 +42,10 @@ function renderPadQuery(){
   const q = norm(document.getElementById("padQueryBox").value);
 
   let list = padItemsCache.slice();
-  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||"" ),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
+  if(q) list = list.filter(it=>
+    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
+    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
+  );
   const padQuerySortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padQuerySortRank(a) - padQuerySortRank(b)) || padCompareItems(a,b));
 
@@ -173,7 +176,10 @@ document.getElementById("padMasterBox").addEventListener("input", renderPadMaste
 function renderPadMaster(){
   const q = norm(document.getElementById("padMasterBox").value);
   let list = padItemsCache.slice();
-  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||""),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
+  if(q) list = list.filter(it=>
+    norm(it.carModel).includes(q) || norm(it.year).includes(q) || norm(it.spec).includes(q) ||
+    norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
+  );
   const padMasterSortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padMasterSortRank(a) - padMasterSortRank(b)) || padCompareItems(a,b));
 
@@ -246,8 +252,16 @@ function deletePadItem(itemId, label){
     return;
   }
   if(!confirm(`確定要刪除規格「${label}」嗎？此動作無法復原。`)) return;
-  db.collection("padItems").doc(itemId).delete()
-    .catch(e=>alert("刪除失敗："+e.message));
+  const itemRef   = db.collection("padItems").doc(itemId);
+  const cacheRef  = db.collection("settings").doc("padCache");
+  const changeRef = db.collection("padItemChanges").doc();
+  db.runTransaction(async t=>{
+    const cacheSnap = await t.get(cacheRef);
+    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
+    t.delete(itemRef);
+    t.set(changeRef, { itemId, action:"delete", changeSequence:newSeq, changedAt:new Date().toISOString() });
+    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("刪除失敗："+e.message));
 }
 
 // 儲位搬倉 Modal：移動庫存時同步所有共用同品號的車款卡
@@ -295,11 +309,18 @@ function openPadLocationModal(itemId, code, side){
       ? padItemsCache.filter(i=> side === "rear" ? i.partNoRear === partNo : i.partNoFront === partNo)
       : [item];
 
-    const batch = db.batch();
-    matching.forEach(mi=>{
-      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-    });
+    const cacheRef  = db.collection("settings").doc("padCache");
     try{
+      const cacheSnap = await cacheRef.get();
+      let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
+      const now = new Date().toISOString();
+      const batch = db.batch();
+      matching.forEach(mi=>{
+        seq++;
+        batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+        batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
+      });
+      batch.set(cacheRef, { changeSequence:seq }, { merge:true });
       await batch.commit();
       closeModal();
     }catch(e){
@@ -323,7 +344,16 @@ function editPadPrice(itemId){
     if(isNaN(num)){ alert("請輸入數字"); return; }
     update.price = num;
   }
-  db.collection("padItems").doc(itemId).update(update).catch(e=>alert("更新失敗："+e.message));
+  const itemRef   = db.collection("padItems").doc(itemId);
+  const cacheRef  = db.collection("settings").doc("padCache");
+  const changeRef = db.collection("padItemChanges").doc();
+  db.runTransaction(async t=>{
+    const cacheSnap = await t.get(cacheRef);
+    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
+    t.update(itemRef, update);
+    t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
+    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("更新失敗："+e.message));
 }
 
 function editPadImageLinks(itemId){
@@ -336,9 +366,15 @@ function editPadImageLinks(itemId){
   const curRear = item.imageLinkRear || "";
   const inputRear = prompt("貼上「後」圖片連結（不需要就留空）", curRear);
   if(inputRear === null) return;
-  db.collection("padItems").doc(itemId).update({
-    imageLinkFront: inputFront.trim() || null,
-    imageLinkRear: inputRear.trim() || null
+  const itemRef   = db.collection("padItems").doc(itemId);
+  const cacheRef  = db.collection("settings").doc("padCache");
+  const changeRef = db.collection("padItemChanges").doc();
+  db.runTransaction(async t=>{
+    const cacheSnap = await t.get(cacheRef);
+    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
+    t.update(itemRef, { imageLinkFront: inputFront.trim() || null, imageLinkRear: inputRear.trim() || null });
+    t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
+    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
   }).catch(e=>alert("更新失敗："+e.message));
 }
 
