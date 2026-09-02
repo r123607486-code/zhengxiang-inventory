@@ -136,27 +136,19 @@ function openKybTxnModal(){
 }
 
 async function submitKybTxn(itemId, type, qty, loc, salesperson){
-  const itemRef    = db.collection("kybItems").doc(itemId);
-  const cacheRef   = db.collection("settings").doc("kybCache");
-  const changeRef  = db.collection("kybItemChanges").doc();
-  const txnRef     = db.collection("kybTransactions").doc();
-  await db.runTransaction(async t=>{
-    const [itemSnap, cacheSnap] = await Promise.all([t.get(itemRef), t.get(cacheRef)]);
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const cur = kybLocQty(allLocs[loc]);
-    const next = type === "in" ? cur + qty : cur - qty;
-    if(next < 0) throw new Error("庫存不足，無法出貨");
-    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-    t.update(itemRef, {locations: allLocs});
-    t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-    t.set(txnRef, {
-      itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
-      salesperson: salesperson || "", editLog: [],
-      createdAt: new Date().toISOString()
-    });
+  const itemRef = db.collection("kybItems").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  const cur = kybLocQty(allLocs[loc]);
+  const next = type === "in" ? cur + qty : cur - qty;
+  if(next < 0) throw new Error("庫存不足，無法出貨");
+  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+  await itemRef.update({locations: allLocs});
+  await db.collection("kybTransactions").add({
+    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
+    salesperson: salesperson || "", editLog: [],
+    createdAt: new Date().toISOString()
   });
   closeModal();
 }
@@ -258,27 +250,19 @@ function openKybAdjustTxnModal(){
 }
 
 async function submitKybAdjustTxn(itemId, adjustSign, qty, loc, reason){
-  const itemRef    = db.collection("kybItems").doc(itemId);
-  const cacheRef   = db.collection("settings").doc("kybCache");
-  const changeRef  = db.collection("kybItemChanges").doc();
-  const txnRef     = db.collection("kybTransactions").doc();
-  await db.runTransaction(async t=>{
-    const [itemSnap, cacheSnap] = await Promise.all([t.get(itemRef), t.get(cacheRef)]);
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const cur = kybLocQty(allLocs[loc]);
-    const next = adjustSign === "+" ? cur + qty : cur - qty;
-    if(next < 0) throw new Error("庫存不足，無法調負這個數量");
-    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-    t.update(itemRef, {locations: allLocs});
-    t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-    t.set(txnRef, {
-      itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
-      operator: currentUser.name, reason, editLog: [],
-      createdAt: new Date().toISOString()
-    });
+  const itemRef = db.collection("kybItems").doc(itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  const cur = kybLocQty(allLocs[loc]);
+  const next = adjustSign === "+" ? cur + qty : cur - qty;
+  if(next < 0) throw new Error("庫存不足，無法調負這個數量");
+  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+  await itemRef.update({locations: allLocs});
+  await db.collection("kybTransactions").add({
+    itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
+    operator: currentUser.name, reason, editLog: [],
+    createdAt: new Date().toISOString()
   });
   closeModal();
 }
@@ -326,45 +310,37 @@ function openEditKybTxnModal(txnId){
 }
 
 async function saveEditKybTxn(t, next){
-  const itemRef   = db.collection("kybItems").doc(t.itemId);
-  const cacheRef  = db.collection("settings").doc("kybCache");
-  const changeRef = db.collection("kybItemChanges").doc();
-  const txnDocRef = db.collection("kybTransactions").doc(t.id);
-  await db.runTransaction(async tr=>{
-    const [itemSnap, cacheSnap] = await Promise.all([tr.get(itemRef), tr.get(cacheRef)]);
-    if(itemSnap.exists){
-      const item = itemSnap.data();
-      const allLocs = {...(item.locations||{})};
+  const itemRef = db.collection("kybItems").doc(t.itemId);
+  const itemSnap = await itemRef.get();
+  if(itemSnap.exists){
+    const item = itemSnap.data();
+    const allLocs = {...(item.locations||{})};
 
-      // 1) 先把「舊紀錄」對庫存的影響完全還原
-      const oldSign = -txnSign(t);
-      const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
-      if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+    // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
+    const oldSign = -txnSign(t);
+    const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
+    if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
 
-      // 2) 套用「新紀錄」的內容
-      const newSign = txnSign(t);
-      const curAtNewLoc = kybLocQty(allLocs[next.loc]);
-      const resultQty = curAtNewLoc + next.qty*newSign;
-      if(newSign < 0 && resultQty < 0){
-        throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
-      }
-      if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
-
-      const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-      tr.update(itemRef, { locations: allLocs });
-      tr.set(changeRef, { itemId:t.itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-      tr.set(cacheRef, { changeSequence:newSeq }, { merge:true });
+    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位）
+    const newSign = txnSign(t);
+    const curAtNewLoc = kybLocQty(allLocs[next.loc]);
+    const resultQty = curAtNewLoc + next.qty*newSign;
+    if(newSign < 0 && resultQty < 0){
+      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
     }
+    if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
 
-    tr.update(txnDocRef, {
-      date: next.date, qty: next.qty, loc: next.loc,
-      salesperson: next.salesperson, customerName: next.customerName,
-      editLog: firebase.firestore.FieldValue.arrayUnion({
-        before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-        after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
-        time: new Date().toISOString(), by: currentUser.name
-      })
-    });
+    await itemRef.update({ locations: allLocs });
+  }
+
+  await db.collection("kybTransactions").doc(t.id).update({
+    date: next.date, qty: next.qty, loc: next.loc,
+    salesperson: next.salesperson, customerName: next.customerName,
+    editLog: firebase.firestore.FieldValue.arrayUnion({
+      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
+      time: new Date().toISOString(), by: currentUser.name
+    })
   });
 }
 
@@ -372,29 +348,20 @@ async function deleteKybTxn(txnId){
   const t = kybTxnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
-  const itemRef    = db.collection("kybItems").doc(t.itemId);
-  const cacheRef   = db.collection("settings").doc("kybCache");
-  const changeRef  = db.collection("kybItemChanges").doc();
-  const editLogRef = db.collection("editLogs").doc();
-  const txnDocRef  = db.collection("kybTransactions").doc(txnId);
-  await db.runTransaction(async tr=>{
-    const [itemSnap, cacheSnap] = await Promise.all([tr.get(itemRef), tr.get(cacheRef)]);
-    if(itemSnap.exists){
-      const item = itemSnap.data();
-      const allLocs = {...(item.locations||{})};
-      const sign = -txnSign(t);
-      const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
-      if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
-      const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-      tr.update(itemRef, {locations: allLocs});
-      tr.set(changeRef, { itemId:t.itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-      tr.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-    }
-    tr.set(editLogRef, {
-      txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
-    });
-    tr.delete(txnDocRef);
+  const itemRef = db.collection("kybItems").doc(t.itemId);
+  const itemSnap = await itemRef.get();
+  if(itemSnap.exists){
+    const item = itemSnap.data();
+    const allLocs = {...(item.locations||{})};
+    const sign = -txnSign(t);
+    const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
+    if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
+    await itemRef.update({locations: allLocs});
+  }
+  await db.collection("editLogs").add({
+    txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
   });
+  await db.collection("kybTransactions").doc(txnId).delete();
 }
 
 function openNewKybItemModal(){
@@ -420,23 +387,14 @@ function openNewKybItemModal(){
     const carModel = document.getElementById("newKybModel").value.trim();
     if(!carModel){ alert("請輸入車型"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
-    const newItemRef = db.collection("kybItems").doc();
-    const cacheRef   = db.collection("settings").doc("kybCache");
-    const changeRef  = db.collection("kybItemChanges").doc();
-    await db.runTransaction(async t=>{
-      const cacheSnap = await t.get(cacheRef);
-      const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-      t.set(newItemRef, {
-        carModel, brand:"KYB",
-        carMake: document.getElementById("newKybMake").value.trim(),
-        bucketType: document.getElementById("newKybBucket").value,
-        yearCode: document.getElementById("newKybYearCode").value.trim(),
-        partNo: document.getElementById("newKybPartNo").value.trim(),
-        remark: document.getElementById("newKybRemark").value.trim(),
-        locations:{}, catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
-      });
-      t.set(changeRef, { itemId:newItemRef.id, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-      t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
+    await db.collection("kybItems").add({
+      carModel, brand:"KYB",
+      carMake: document.getElementById("newKybMake").value.trim(),
+      bucketType: document.getElementById("newKybBucket").value,
+      yearCode: document.getElementById("newKybYearCode").value.trim(),
+      partNo: document.getElementById("newKybPartNo").value.trim(),
+      remark: document.getElementById("newKybRemark").value.trim(),
+      locations:{}, catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
     });
     closeModal();
   });
@@ -530,9 +488,9 @@ function openConfirmKybOrderModal(orderId){
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不夠出 ${order.qty}，請選別的儲位，或先用「修改」調整這筆訂單的數量`); return; }
     try{
-      const linkedTxnId = await submitKybOrderTxn(order, opt.code);
+      const txnRef = await submitKybOrderTxn(order, opt.code);
       await db.collection("kybOrders").doc(order.id).update({
-        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId
+        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
       });
       closeModal();
     }catch(e){
@@ -542,32 +500,23 @@ function openConfirmKybOrderModal(orderId){
 }
 
 async function submitKybOrderTxn(order, loc){
-  const itemRef    = db.collection("kybItems").doc(order.itemId);
-  const cacheRef   = db.collection("settings").doc("kybCache");
-  const changeRef  = db.collection("kybItemChanges").doc();
-  const txnRef     = db.collection("kybTransactions").doc();
-  await db.runTransaction(async t=>{
-    const [itemSnap, cacheSnap] = await Promise.all([t.get(itemRef), t.get(cacheRef)]);
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const cur = kybLocQty(allLocs[loc]);
-    if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
-    const next = cur - order.qty;
-    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-    t.update(itemRef, {locations: allLocs});
-    t.set(changeRef, { itemId:order.itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-    t.set(txnRef, {
-      itemId: order.itemId, type: "out", qty: order.qty, loc,
-      date: todayStr(), operator: currentUser.name,
-      salesperson: order.requestedByName || "", customerName: order.customerName || "",
-      customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-      orderId: order.id, editLog: [],
-      createdAt: new Date().toISOString()
-    });
+  const itemRef = db.collection("kybItems").doc(order.itemId);
+  const itemSnap = await itemRef.get();
+  const item = itemSnap.data();
+  const allLocs = {...(item.locations||{})};
+  const cur = kybLocQty(allLocs[loc]);
+  if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
+  const next = cur - order.qty;
+  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+  await itemRef.update({locations: allLocs});
+  return await db.collection("kybTransactions").add({
+    itemId: order.itemId, type: "out", qty: order.qty, loc,
+    date: todayStr(), operator: currentUser.name,
+    salesperson: order.requestedByName || "", customerName: order.customerName || "",
+    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+    orderId: order.id, editLog: [],
+    createdAt: new Date().toISOString()
   });
-  return txnRef.id;
 }
 
 function openEditKybOrderModal(orderId){

@@ -84,10 +84,7 @@ function buildPadItemSearch(searchId, listId, labelId, onSelect){
     const q = norm(searchInput.value);
     const listEl = document.getElementById(listId);
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = padItemsCache.filter(it=>
-      norm(it.carModel).includes(q) || norm(it.spec).includes(q) ||
-      norm(it.partNoFront).includes(q) || norm(it.partNoRear).includes(q)
-    ).slice(0,15);
+    const qNoH=q.replace(/-/g,""); const matches = padItemsCache.filter(it=>{ const cm=norm(it.carModel),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }).slice(0,15);
     listEl.innerHTML = matches.map(it=>{
       const pn = [it.partNoFront, it.partNoRear].filter(Boolean).join(" / ");
       return `<div data-id="${it.id}">${escapeHtml(padItemLabel(it))}${pn?` <span style="color:var(--muted);font-size:12px;">[${escapeHtml(pn)}]</span>`:"" }</div>`;
@@ -196,11 +193,9 @@ function openPadTxnModal(){
 
 async function submitPadTxn(itemId, type, qty, loc, salesperson, side){
   const locField = padLocField(side);
-  const itemRef  = db.collection("padItems").doc(itemId);
-  const cacheRef = db.collection("settings").doc("padCache");
-  const txnRef   = db.collection("padTransactions").doc();
-
-  const [itemSnap, cacheSnap] = await Promise.all([itemRef.get(), cacheRef.get()]);
+  // 讀主要品項的現有庫存（以使用者看到的那張卡為準）
+  const itemRef = db.collection("padItems").doc(itemId);
+  const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const allLocs = padReadLocs(item, side);
   const cur = padLocQty(allLocs[loc]);
@@ -209,22 +204,19 @@ async function submitPadTxn(itemId, type, qty, loc, salesperson, side){
   const newLocs = {...allLocs};
   if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
 
+  // 同步所有共用同品號的車款卡
   const matching = getMatchingPadItems(itemId, side);
-  let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
-  const now = new Date().toISOString();
   const batch = db.batch();
   matching.forEach(mi=>{
-    seq++;
     batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-    batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
-  });
-  batch.set(cacheRef, { changeSequence:seq }, { merge:true });
-  batch.set(txnRef, {
-    itemId, type, qty, loc, side, date: todayStr(), operator: currentUser.name,
-    salesperson: salesperson || "", editLog: [],
-    createdAt: now
   });
   await batch.commit();
+
+  await db.collection("padTransactions").add({
+    itemId, type, qty, loc, side, date: todayStr(), operator: currentUser.name,
+    salesperson: salesperson || "", editLog: [],
+    createdAt: new Date().toISOString()
+  });
   closeModal();
 }
 
@@ -320,11 +312,8 @@ function openPadAdjustTxnModal(){
 
 async function submitPadAdjustTxn(itemId, adjustSign, qty, loc, reason, side){
   const locField = padLocField(side);
-  const itemRef  = db.collection("padItems").doc(itemId);
-  const cacheRef = db.collection("settings").doc("padCache");
-  const txnRef   = db.collection("padTransactions").doc();
-
-  const [itemSnap, cacheSnap] = await Promise.all([itemRef.get(), cacheRef.get()]);
+  const itemRef = db.collection("padItems").doc(itemId);
+  const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const allLocs = padReadLocs(item, side);
   const cur = padLocQty(allLocs[loc]);
@@ -333,22 +322,19 @@ async function submitPadAdjustTxn(itemId, adjustSign, qty, loc, reason, side){
   const newLocs = {...allLocs};
   if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
 
+  // 同步所有共用同品號的車款卡
   const matching = getMatchingPadItems(itemId, side);
-  let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
-  const now = new Date().toISOString();
   const batch = db.batch();
   matching.forEach(mi=>{
-    seq++;
     batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-    batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
-  });
-  batch.set(cacheRef, { changeSequence:seq }, { merge:true });
-  batch.set(txnRef, {
-    itemId, type: "adjust", adjustSign, qty, loc, side, date: todayStr(),
-    operator: currentUser.name, reason, editLog: [],
-    createdAt: now
   });
   await batch.commit();
+
+  await db.collection("padTransactions").add({
+    itemId, type: "adjust", adjustSign, qty, loc, side, date: todayStr(),
+    operator: currentUser.name, reason, editLog: [],
+    createdAt: new Date().toISOString()
+  });
   closeModal();
 }
 
@@ -394,17 +380,10 @@ function openEditPadTxnModal(txnId){
 }
 
 async function saveEditPadTxn(t, next){
-  const side     = t.side || "front";
+  const side = t.side || "front";
   const locField = padLocField(side);
-  const itemRef  = db.collection("padItems").doc(t.itemId);
-  const cacheRef = db.collection("settings").doc("padCache");
-  const txnDocRef = db.collection("padTransactions").doc(t.id);
-
-  const [itemSnap, cacheSnap] = await Promise.all([itemRef.get(), cacheRef.get()]);
-  const now = new Date().toISOString();
-  const batch = db.batch();
-  let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
-
+  const itemRef = db.collection("padItems").doc(t.itemId);
+  const itemSnap = await itemRef.get();
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = padReadLocs(item, side);
@@ -424,43 +403,34 @@ async function saveEditPadTxn(t, next){
     }
     if(resultQty <= 0) delete newLocs[next.loc]; else newLocs[next.loc] = resultQty;
 
+    // 同步所有共用同品號的車款卡
     const matching = getMatchingPadItems(t.itemId, side);
+    const batch = db.batch();
     matching.forEach(mi=>{
-      seq++;
       batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-      batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
     });
-    batch.set(cacheRef, { changeSequence:seq }, { merge:true });
+    await batch.commit();
   }
 
-  batch.update(txnDocRef, {
+  await db.collection("padTransactions").doc(t.id).update({
     date: next.date, qty: next.qty, loc: next.loc,
     salesperson: next.salesperson, customerName: next.customerName,
     editLog: firebase.firestore.FieldValue.arrayUnion({
       before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
       after:  { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
-      time: now, by: currentUser.name
+      time: new Date().toISOString(), by: currentUser.name
     })
   });
-  await batch.commit();
 }
 
 async function deletePadTxn(txnId){
   const t = padTxnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
-  const side      = t.side || "front";
-  const locField  = db.collection("padItems").doc; // (not used directly, kept for clarity)
-  const itemRef   = db.collection("padItems").doc(t.itemId);
-  const cacheRef  = db.collection("settings").doc("padCache");
-  const txnDocRef = db.collection("padTransactions").doc(txnId);
-  const editLogRef = db.collection("editLogs").doc();
-
-  const [itemSnap, cacheSnap] = await Promise.all([itemRef.get(), cacheRef.get()]);
-  const now = new Date().toISOString();
-  const batch = db.batch();
-  let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
-
+  const side = t.side || "front";
+  const locField = padLocField(side);
+  const itemRef = db.collection("padItems").doc(t.itemId);
+  const itemSnap = await itemRef.get();
   if(itemSnap.exists){
     const item = itemSnap.data();
     const allLocs = padReadLocs(item, side);
@@ -469,20 +439,18 @@ async function deletePadTxn(txnId){
     const newLocs = {...allLocs};
     if(next <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = next;
 
-    const lf = padLocField(side);
+    // 同步所有共用同品號的車款卡
     const matching = getMatchingPadItems(t.itemId, side);
+    const batch = db.batch();
     matching.forEach(mi=>{
-      seq++;
-      batch.update(db.collection("padItems").doc(mi.id), {[lf]: newLocs});
-      batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
+      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
     });
-    batch.set(cacheRef, { changeSequence:seq }, { merge:true });
+    await batch.commit();
   }
-  batch.set(editLogRef, {
-    txnId, source:"pad", action:"delete", before:t, time:now, by:currentUser.name
+  await db.collection("editLogs").add({
+    txnId, source:"pad", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
   });
-  batch.delete(txnDocRef);
-  await batch.commit();
+  await db.collection("padTransactions").doc(txnId).delete();
 }
 
 function openNewPadItemModal(){
@@ -506,27 +474,18 @@ function openNewPadItemModal(){
     const carModel = document.getElementById("newPadModel").value.trim();
     if(!carModel){ alert("請輸入車款"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
-    const newItemRef = db.collection("padItems").doc();
-    const cacheRef   = db.collection("settings").doc("padCache");
-    const changeRef  = db.collection("padItemChanges").doc();
-    await db.runTransaction(async t=>{
-      const cacheSnap = await t.get(cacheRef);
-      const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-      t.set(newItemRef, {
-        carModel, brand:"YangPo",
-        year: document.getElementById("newPadYear").value.trim(),
-        spec: document.getElementById("newPadSpec").value.trim(),
-        partNoFront: document.getElementById("newPadPartFront").value.trim(),
-        fmsiFront: document.getElementById("newPadFmsiFront").value.trim(),
-        partNoRear: document.getElementById("newPadPartRear").value.trim(),
-        fmsiRear: document.getElementById("newPadFmsiRear").value.trim(),
-        remark: document.getElementById("newPadRemark").value.trim(),
-        locationsFront:{}, locationsRear:{},
-        price: toNum("newPadPrice"),
-        imageLinkFront: null, imageLinkRear: null
-      });
-      t.set(changeRef, { itemId:newItemRef.id, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-      t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
+    await db.collection("padItems").add({
+      carModel, brand:"YangPo",
+      year: document.getElementById("newPadYear").value.trim(),
+      spec: document.getElementById("newPadSpec").value.trim(),
+      partNoFront: document.getElementById("newPadPartFront").value.trim(),
+      fmsiFront: document.getElementById("newPadFmsiFront").value.trim(),
+      partNoRear: document.getElementById("newPadPartRear").value.trim(),
+      fmsiRear: document.getElementById("newPadFmsiRear").value.trim(),
+      remark: document.getElementById("newPadRemark").value.trim(),
+      locationsFront:{}, locationsRear:{},
+      price: toNum("newPadPrice"),
+      imageLinkFront: null, imageLinkRear: null
     });
     closeModal();
   });
@@ -625,9 +584,9 @@ function openConfirmPadOrderModal(orderId){
     if(!opt){ alert("請選擇儲位"); return; }
     if(order.qty > opt.qty){ alert(`這個儲位目前只有 ${opt.qty}，不夠出 ${order.qty}，請選別的儲位，或先用「修改」調整這筆訂單的數量`); return; }
     try{
-      const linkedTxnId = await submitPadOrderTxn(order, opt.code);
+      const txnRef = await submitPadOrderTxn(order, opt.code);
       await db.collection("padOrders").doc(order.id).update({
-        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId
+        status: "confirmed", confirmedAt: new Date().toISOString(), confirmedBy: currentUser.name, linkedTxnId: txnRef.id
       });
       closeModal();
     }catch(e){
@@ -639,10 +598,8 @@ function openConfirmPadOrderModal(orderId){
 async function submitPadOrderTxn(order, loc){
   const side = order.side || "front";
   const locField = padLocField(side);
-  const itemRef  = db.collection("padItems").doc(order.itemId);
-  const cacheRef = db.collection("settings").doc("padCache");
-  const txnRef   = db.collection("padTransactions").doc();
-  const [itemSnap, cacheSnap] = await Promise.all([itemRef.get(), cacheRef.get()]);
+  const itemRef = db.collection("padItems").doc(order.itemId);
+  const itemSnap = await itemRef.get();
   const item = itemSnap.data();
   const allLocs = padReadLocs(item, side);
   const cur = padLocQty(allLocs[loc]);
@@ -651,27 +608,22 @@ async function submitPadOrderTxn(order, loc){
   const newLocs = {...allLocs};
   if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
 
-  // 同步所有共用同品號的車款卡，同時寫入 changeLog
+  // 同步所有共用同品號的車款卡
   const matching = getMatchingPadItems(order.itemId, side);
-  let seq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0);
-  const now = new Date().toISOString();
   const batch = db.batch();
   matching.forEach(mi=>{
-    seq++;
     batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-    batch.set(db.collection("padItemChanges").doc(), { itemId:mi.id, action:"update", changeSequence:seq, changedAt:now });
   });
-  batch.set(cacheRef, { changeSequence:seq }, { merge:true });
-  batch.set(txnRef, {
+  await batch.commit();
+
+  return await db.collection("padTransactions").add({
     itemId: order.itemId, type: "out", qty: order.qty, loc, side,
     date: todayStr(), operator: currentUser.name,
     salesperson: order.requestedByName || "", customerName: order.customerName || "",
     customerContact: order.customerContact || "", customerNote: order.customerNote || "",
     orderId: order.id, editLog: [],
-    createdAt: now
+    createdAt: new Date().toISOString()
   });
-  await batch.commit();
-  return txnRef.id;
 }
 
 function openEditPadOrderModal(orderId){

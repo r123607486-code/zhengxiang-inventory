@@ -178,16 +178,8 @@ function deleteKybItem(itemId, carModel){
     return;
   }
   if(!confirm(`確定要刪除車型「${carModel}」嗎？此動作無法復原。`)) return;
-  const itemRef    = db.collection("kybItems").doc(itemId);
-  const cacheRef   = db.collection("settings").doc("kybCache");
-  const changeRef  = db.collection("kybItemChanges").doc();
-  db.runTransaction(async t=>{
-    const cacheSnap = await t.get(cacheRef);
-    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-    t.delete(itemRef);
-    t.set(changeRef, { itemId, action:"delete", changeSequence:newSeq, changedAt:new Date().toISOString() });
-    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-  }).catch(e=>alert("刪除失敗："+e.message));
+  db.collection("kybItems").doc(itemId).delete()
+    .catch(e=>alert("刪除失敗："+e.message));
 }
 
 function openKybLocationModal(itemId, code){
@@ -224,16 +216,8 @@ function openKybLocationModal(itemId, code){
     newLocs[moveTarget] = kybLocQty(newLocs[moveTarget]) + moveQty;
     if(newLocs[code] <= 0) delete newLocs[code];
 
-    const itemRef   = db.collection("kybItems").doc(itemId);
-    const cacheRef  = db.collection("settings").doc("kybCache");
-    const changeRef = db.collection("kybItemChanges").doc();
-    db.runTransaction(async t=>{
-      const cacheSnap = await t.get(cacheRef);
-      const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-      t.update(itemRef, { locations: newLocs });
-      t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-      t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-    }).then(()=>closeModal())
+    db.collection("kybItems").doc(itemId).update({ locations: newLocs })
+      .then(()=>closeModal())
       .catch(e=>alert("更新失敗："+e.message));
   });
 }
@@ -253,16 +237,7 @@ function editKybPrice(itemId, field, label){
     if(isNaN(num)){ alert("請輸入數字"); return; }
     update[field] = num;
   }
-  const itemRef   = db.collection("kybItems").doc(itemId);
-  const cacheRef  = db.collection("settings").doc("kybCache");
-  const changeRef = db.collection("kybItemChanges").doc();
-  db.runTransaction(async t=>{
-    const cacheSnap = await t.get(cacheRef);
-    const newSeq = (cacheSnap.exists ? (cacheSnap.data().changeSequence||0) : 0) + 1;
-    t.update(itemRef, update);
-    t.set(changeRef, { itemId, action:"update", changeSequence:newSeq, changedAt:new Date().toISOString() });
-    t.set(cacheRef, { changeSequence:newSeq }, { merge:true });
-  }).catch(e=>alert("更新失敗："+e.message));
+  db.collection("kybItems").doc(itemId).update(update).catch(e=>alert("更新失敗："+e.message));
 }
 
 document.getElementById("kybExportBtn").addEventListener("click", ()=>{
