@@ -96,7 +96,7 @@ function buildPadItemSearch(searchId, listId, labelId, onSelect){
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
       const it = padItemsCache.find(i=>i.id===d.dataset.id);
       const pn = [it.partNoFront, it.partNoRear].filter(Boolean).join(" / ");
-      document.getElementById(labelId).value = padItemLabel(it) + (pn?`  [${pn}]`:"reacted");
+      document.getElementById(labelId).value = padItemLabel(it) + (pn?`  [${pn}]`:"");
       listEl.classList.add("hidden");
       searchInput.value = "";
       onSelect(d.dataset.id, it);
