@@ -43,6 +43,10 @@
         <span class="category-icon" id="categoryIconPad"></span>
         <span class="category-label">YangPo來令片</span>
       </button>
+      <button class="category-card" data-category="tein">
+        <span class="category-icon" id="categoryIconTein"></span>
+        <span class="category-label">TEIN避震器</span>
+      </button>
     </div>
   </div>
 </div>
@@ -138,7 +142,7 @@
       </div>
     </section>
 
-    <!-- 訂單管理（管理者：確認/修改/取消員工送出的叫貨，並可查詢已出貨/已取消歷史） -->
+    <!-- 訂單管理 -->
     <section class="page" id="page-orders">
       <div class="page-head">
         <div class="toolbar">
@@ -160,7 +164,7 @@
       </div>
     </section>
 
-    <!-- 我的訂單（員工：查看自己叫貨的狀態與紀錄） -->
+    <!-- 我的訂單 -->
     <section class="page" id="page-myorders">
       <div class="page-head">
         <div class="count" id="myOrdersCount"></div>
@@ -189,7 +193,7 @@
       </div>
     </section>
 
-    <!-- 資料匯入（一次性工具） -->
+    <!-- 資料匯入 -->
     <section class="page" id="page-import">
       <div class="toolbar">
         <button id="clearDataBtn">清除所有品項與儲位資料</button>
@@ -216,9 +220,8 @@
       </div>
     </section>
 
-    <!-- ===================== KYB 避震器模組（獨立品項，不與輪胎混用） ===================== -->
+    <!-- ===================== KYB 避震器模組 ===================== -->
 
-    <!-- KYB 庫存查詢 -->
     <section class="page" id="page-kyb-query">
       <div class="page-head">
         <div class="toolbar">
@@ -229,7 +232,6 @@
       <div id="kybQueryResults"></div>
     </section>
 
-    <!-- KYB 庫存總表 -->
     <section class="page" id="page-kyb-master">
       <div class="page-head">
         <div class="toolbar">
@@ -246,7 +248,6 @@
       </div>
     </section>
 
-    <!-- KYB 進銷貨管理 -->
     <section class="page" id="page-kyb-txn">
       <div class="page-head">
         <div class="toolbar">
@@ -272,7 +273,6 @@
       </div>
     </section>
 
-    <!-- KYB 訂單管理 -->
     <section class="page" id="page-kyb-orders">
       <div class="page-head">
         <div class="toolbar">
@@ -294,7 +294,6 @@
       </div>
     </section>
 
-    <!-- KYB 我的訂單 -->
     <section class="page" id="page-kyb-myorders">
       <div class="page-head">
         <div class="count" id="kybMyOrdersCount"></div>
@@ -307,7 +306,6 @@
       </div>
     </section>
 
-    <!-- KYB 儲位管理 -->
     <section class="page" id="page-kyb-loc">
       <div class="page-head">
         <div class="toolbar">
@@ -323,7 +321,6 @@
       </div>
     </section>
 
-    <!-- KYB 資料匯入（獨立於輪胎的資料匯入，避免誤刪對方的資料） -->
     <section class="page" id="page-kyb-import">
       <div class="toolbar">
         <button id="kybClearDataBtn">清除所有KYB車型與儲位資料</button>
@@ -335,9 +332,8 @@
       <div class="count" id="kybImportStatus">這個工具僅適用於KYB資料，不會動到輪胎的品項／儲位：<br>上傳整合好的KYB報價表（含「避震款式」「廠牌」「車型」「年份代碼」「料號」「保修廠價」「一線消費者售價」欄位）→ 自動建立/更新KYB車型清單，白桶／藍桶／深藍桶會依「車型＋避震款式」分別比對，不會互相覆蓋。也相容舊版報價單（僅含「車型」「訂價」「牌價」「保修廠」欄位，會視為白桶匯入）。（庫存與儲位請自行在「KYB庫存總表」輸入）。</div>
     </section>
 
-    <!-- ===================== YangPo 來令片模組（獨立品項，不與輪胎/KYB混用） ===================== -->
+    <!-- ===================== YangPo 來令片模組 ===================== -->
 
-    <!-- 來令片 庫存查詢 -->
     <section class="page" id="page-pad-query">
       <div class="page-head">
         <div class="toolbar">
@@ -348,7 +344,6 @@
       <div id="padQueryResults"></div>
     </section>
 
-    <!-- 來令片 庫存總表 -->
     <section class="page" id="page-pad-master">
       <div class="page-head">
         <div class="toolbar">
@@ -365,7 +360,6 @@
       </div>
     </section>
 
-    <!-- 來令片 進銷貨管理 -->
     <section class="page" id="page-pad-txn">
       <div class="page-head">
         <div class="toolbar">
@@ -391,7 +385,6 @@
       </div>
     </section>
 
-    <!-- 來令片 訂單管理 -->
     <section class="page" id="page-pad-orders">
       <div class="page-head">
         <div class="toolbar">
@@ -413,7 +406,6 @@
       </div>
     </section>
 
-    <!-- 來令片 我的訂單 -->
     <section class="page" id="page-pad-myorders">
       <div class="page-head">
         <div class="count" id="padMyOrdersCount"></div>
@@ -426,7 +418,6 @@
       </div>
     </section>
 
-    <!-- 來令片 儲位管理 -->
     <section class="page" id="page-pad-loc">
       <div class="page-head">
         <div class="toolbar">
@@ -442,7 +433,6 @@
       </div>
     </section>
 
-    <!-- 來令片 資料匯入（獨立於輪胎／KYB的資料匯入，避免誤動到對方的資料） -->
     <section class="page" id="page-pad-import">
       <div class="toolbar">
         <button id="padClearDataBtn">清除所有來令片品項與儲位資料</button>
@@ -470,6 +460,119 @@
       </div>
       <div class="count" id="padStockImportStatus">上傳含「品號」「數量」「儲位」三欄的資料表 → 依品號比對現有來令片品項（前/後），將該儲位的庫存數量覆蓋為 Excel 填寫的數量（其他儲位不受影響，填 0 表示清除該儲位庫存）。</div>
     </section>
+
+    <!-- ===================== TEIN 避震器模組 ===================== -->
+
+    <section class="page" id="page-tein-query">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="teinQueryBox" placeholder="輸入車型、廠牌或規格關鍵字，例如 FIT 或 HONDA">
+        </div>
+        <div class="count" id="teinQueryCount"></div>
+      </div>
+      <div id="teinQueryResults"></div>
+    </section>
+
+    <section class="page" id="page-tein-master">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="teinMasterBox" placeholder="輸入車型、廠牌或規格篩選">
+          <button id="teinExportBtn">匯出目前結果(Excel)</button>
+        </div>
+        <div class="count" id="teinMasterCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>車型</th><th>廠牌</th><th>規格</th><th>款式</th><th>批發價</th><th>一線消費者售價</th><th>總量</th><th>儲位分布（點擊可調整／搬倉）</th><th>備註</th><th>操作</th></tr></thead>
+          <tbody id="teinMasterBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="page" id="page-tein-txn">
+      <div class="page-head">
+        <div class="toolbar">
+          <button class="primary" id="teinNewTxnBtn">+ 新增進貨/銷貨</button>
+          <button id="teinNewAdjustBtn">+ 庫存校正</button>
+          <button id="teinNewItemBtn">+ 新增車型</button>
+        </div>
+        <div class="toolbar">
+          <input type="date" id="teinTxnFilterFrom">
+          <span style="font-size:13px;color:var(--muted);">～</span>
+          <input type="date" id="teinTxnFilterTo">
+          <input type="text" id="teinTxnFilterSalesperson" placeholder="篩選業務姓名">
+          <input type="text" id="teinTxnFilterCustomer" placeholder="篩選客戶姓名">
+          <button id="teinTxnFilterClearBtn">清除篩選</button>
+        </div>
+        <div class="count" id="teinTxnCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>日期</th><th>類型</th><th>車型</th><th>數量</th><th>業務</th><th>客戶</th><th>操作人員</th><th>操作</th></tr></thead>
+          <tbody id="teinTxnBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="page" id="page-tein-orders">
+      <div class="page-head">
+        <div class="toolbar">
+          <span style="font-size:13px;color:var(--muted);">狀態</span>
+          <select id="teinOrdersStatusFilter">
+            <option value="pending">待確認</option>
+            <option value="all">全部</option>
+            <option value="confirmed">已出貨</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
+        <div class="count" id="teinOrdersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>業務</th><th>車型</th><th>數量</th><th>員工選擇儲位</th><th>客戶</th><th>聯絡方式</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead>
+          <tbody id="teinOrdersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="page" id="page-tein-myorders">
+      <div class="page-head">
+        <div class="count" id="teinMyOrdersCount"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>下單時間</th><th>車型</th><th>數量</th><th>客戶</th><th>狀態</th></tr></thead>
+          <tbody id="teinMyOrdersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="page" id="page-tein-loc">
+      <div class="page-head">
+        <div class="toolbar">
+          <input type="text" id="teinNewLocInput" placeholder="新儲位代碼，例如 A左">
+          <button class="primary" id="teinAddLocBtn">新增儲位</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>儲位代碼</th><th>操作</th></tr></thead>
+          <tbody id="teinLocBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="page" id="page-tein-import">
+      <div class="toolbar">
+        <button id="teinClearDataBtn">清除所有TEIN車型與儲位資料</button>
+      </div>
+      <div class="toolbar">
+        <input type="file" id="teinImportFile" accept=".xlsx">
+        <button class="primary" id="teinImportBtn">開始匯入</button>
+      </div>
+      <div class="count" id="teinImportStatus">這個工具僅適用於TEIN資料，不會動到其他品項／儲位：<br>上傳含「廠牌」「車型」「規格」「款式」「批發價」「一線消費者售價」欄位的 Excel → 自動建立/更新TEIN車型清單，END 與 END+ 會依「車型＋款式」分別比對，不會互相覆蓋。（庫存與儲位請自行在「TEIN庫存總表」輸入）。</div>
+    </section>
+
   </main>
 </div>
 
@@ -478,15 +581,15 @@
   <div class="sheet" id="modalSheet"></div>
 </div>
 
-<!-- Firebase SDK (compat CDN 版本，不需要 npm/打包工具) -->
+<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<!-- SheetJS：用來匯出 Excel，免費、純前端 -->
+<!-- SheetJS -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js?v=20260807b"></script>
-<script src="core.js?v=20260818"></script>
+<script src="core.js?v=20260909"></script>
 <script src="modal-shared.js"></script>
 <script src="tire-inventory.js?v=20260825"></script>
 <script src="tire-transactions-orders.js?v=20260825"></script>
@@ -499,6 +602,9 @@
 <script src="pad-inventory.js?v=20260818"></script>
 <script src="pad-transactions-orders.js?v=20260818"></script>
 <script src="pad-data-import.js?v=20260820"></script>
+<script src="tein-inventory.js?v=20260909"></script>
+<script src="tein-transactions-orders.js?v=20260909"></script>
+<script src="tein-data-import.js?v=20260909"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
