@@ -20,10 +20,10 @@ const ICONS = {
 };
 
 const CATEGORY_ICONS = {
-  tire: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><line x1="12" y1="3" x2="12" y2="6.2"/><line x1="12" y1="17.8" x2="12" y2="21"/><line x1="3" y1="12" x2="6.2" y2="12"/><line x1="17.8" y1="12" x2="21" y2="12"/></svg>',
-  kyb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="8"/><rect x="8.5" y="8" width="7" height="10" rx="1.5"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="9" y1="10.5" x2="15" y2="10.5"/><line x1="9" y1="13.5" x2="15" y2="13.5"/></svg>',
-  pad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14c0-4.5 2-8 8-8s8 3.5 8 8v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4z"/><circle cx="8.5" cy="15" r="1"/><circle cx="15.5" cy="15" r="1"/></svg>',
-  tein: '<svg viewBox="0 0 24 24" fill="none" stroke="#2d7a2d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="3" rx="1.5"/><line x1="12" y1="8" x2="12" y2="19"/><line x1="9" y1="19" x2="15" y2="19"/></svg>'
+  tire: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><line x1="12" y1="9" x2="12" y2="3.5"/><line x1="12" y1="15" x2="12" y2="20.5"/><line x1="9" y1="12" x2="3.5" y2="12"/><line x1="15" y1="12" x2="20.5" y2="12"/><line x1="9.9" y1="9.9" x2="6.2" y2="6.2"/><line x1="14.1" y1="14.1" x2="17.8" y2="17.8"/><line x1="14.1" y1="9.9" x2="17.8" y2="6.2"/><line x1="9.9" y1="14.1" x2="6.2" y2="17.8"/></svg>',
+  kyb:  '<svg viewBox="0 0 48 24" fill="none" xmlns="http://www.w3.org/2000/svg"><text x="1" y="20" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="22" fill="#e8001c" letter-spacing="-1">KYB</text></svg>',
+  pad:  '<svg viewBox="0 0 72 24" fill="none" xmlns="http://www.w3.org/2000/svg"><text x="1" y="18" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="17" fill="#1a3fa8">Yang</text><text x="41" y="18" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="17" fill="#e8001c">Po</text></svg>',
+  tein: '<svg viewBox="0 0 60 24" fill="none" xmlns="http://www.w3.org/2000/svg"><text x="1" y="19" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="20" fill="#2d7a2d" letter-spacing="1">TEIN</text></svg>'
 };
 
 let currentUser = null;
