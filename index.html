@@ -571,6 +571,12 @@
         <button class="primary" id="teinImportBtn">開始匯入</button>
       </div>
       <div class="count" id="teinImportStatus">這個工具僅適用於TEIN資料，不會動到其他品項／儲位：<br>上傳含「廠牌」「車型」「規格」「款式」「批發價」「一線消費者售價」欄位的 Excel → 自動建立/更新TEIN車型清單，END 與 END+ 會依「車型＋款式」分別比對，不會互相覆蓋。（庫存與儲位請自行在「TEIN庫存總表」輸入）。</div>
+
+      <div class="toolbar" style="margin-top:24px;">
+        <input type="file" id="teinStockImportFile" accept=".xlsx">
+        <button class="primary" id="teinStockImportBtn">批次匯入庫存數量</button>
+      </div>
+      <div class="count" id="teinStockImportStatus">上傳「庫存總表」匯出的 Excel（含「車型」「款式」「總量」欄位）→ 依車型＋款式比對，將總量寫入對應儲位。儲位分布欄有填（格式如「A區x3」）就照填；空白則寫入現有第一個儲位，沒有儲位的請手動處理。</div>
     </section>
 
   </main>
@@ -589,7 +595,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script src="firebase-config.js?v=20260807b"></script>
-<script src="core.js?v=20260909"></script>
+<script src="core.js?v=20260909b"></script>
 <script src="modal-shared.js"></script>
 <script src="tire-inventory.js?v=20260825"></script>
 <script src="tire-transactions-orders.js?v=20260825"></script>
@@ -604,7 +610,7 @@
 <script src="pad-data-import.js?v=20260820"></script>
 <script src="tein-inventory.js?v=20260909"></script>
 <script src="tein-transactions-orders.js?v=20260909"></script>
-<script src="tein-data-import.js?v=20260909"></script>
+<script src="tein-data-import.js?v=20260909b"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
