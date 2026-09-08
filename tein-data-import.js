@@ -2,23 +2,28 @@
 // TEIN 資料匯入
 // 匯入格式：Excel 含「廠牌」「車型」「規格」「款式」「批發價」「一線消費者售價」欄位
 // 比對key：車型 + 款式（END / END+），相同就更新，不同就新增
+// 每批上限 200 筆（Firebase batch 上限 500，保守設定避免靜默失敗）
 // ============================================================
 
 document.getElementById("teinClearDataBtn").addEventListener("click", async ()=>{
   if(!confirm("確定要清除所有「TEIN車型」與「TEIN儲位」資料嗎？（不會動到輪胎/KYB/來令片資料，也不會動到TEIN的進出貨紀錄）確定要繼續嗎？")) return;
   const statusEl = document.getElementById("teinImportStatus");
   statusEl.textContent = "清除中...";
-  const itemsSnap = await db.collection("teinItems").get();
-  const locSnap = await db.collection("teinLocations").get();
-  const allDocs = [...itemsSnap.docs, ...locSnap.docs];
-  let done = 0;
-  while(done < allDocs.length){
-    const batch = db.batch();
-    allDocs.slice(done, done+400).forEach(d=>batch.delete(d.ref));
-    await batch.commit();
-    done += 400;
+  try {
+    const itemsSnap = await db.collection("teinItems").get();
+    const locSnap = await db.collection("teinLocations").get();
+    const allDocs = [...itemsSnap.docs, ...locSnap.docs];
+    let done = 0;
+    while(done < allDocs.length){
+      const batch = db.batch();
+      allDocs.slice(done, done+200).forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+      done += 200;
+    }
+    statusEl.textContent = `已清除 ${itemsSnap.size} 筆TEIN車型與 ${locSnap.size} 筆儲位資料，可以重新選檔匯入了。`;
+  } catch(e) {
+    statusEl.textContent = "清除失敗：" + e.message;
   }
-  statusEl.textContent = `已清除 ${itemsSnap.size} 筆TEIN車型與 ${locSnap.size} 筆儲位資料，可以重新選檔匯入了。`;
 });
 
 document.getElementById("teinImportBtn").addEventListener("click", async ()=>{
@@ -30,7 +35,7 @@ document.getElementById("teinImportBtn").addEventListener("click", async ()=>{
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, {type:"array"});
 
-  // 偵測 TEIN 報價單格式：任何工作表含「車型」「款式」「批發價」「一線消費者售價」
+  // 偵測 TEIN 報價單格式：任何工作表含「車型」「款式」「批發價」或「一線消費者售價」
   let detected = null;
   for(const sheetName of wb.SheetNames){
     const ws = wb.Sheets[sheetName];
@@ -85,41 +90,49 @@ document.getElementById("teinImportBtn").addEventListener("click", async ()=>{
   });
 
   const rowsToApply = Array.from(merged.values());
-  statusEl.textContent = `偵測到TEIN報價單，共 ${rowsToApply.length} 筆${skippedCount?`（已跳過疑似備註文字的 ${skippedCount} 列）`:""}，匯入中...`;
+  const total = rowsToApply.length;
+  statusEl.textContent = `偵測到TEIN報價單，共 ${total} 筆${skippedCount?`（已跳過疑似備註文字的 ${skippedCount} 列）`:""}，匯入中...`;
 
   let created = 0, updated = 0;
-  let batch = db.batch();
-  let opCount = 0;
 
-  for(const r of rowsToApply){
-    const existing = teinItemsCache.find(it=>
-      norm(it.carModel)===norm(r.carModel) &&
-      (it.style||"") === r.style
-    );
-    const payload = {
-      carMake: r.carMake,
-      spec: r.spec,
-      style: r.style,
-      warrantyPrice: r.warrantyPrice,
-      catalogPrice: r.catalogPrice
-    };
-    if(r.remark) payload.remark = r.remark;
+  try {
+    // 每批最多 200 筆，避免超過 Firebase batch 上限
+    const BATCH_SIZE = 200;
+    for(let i = 0; i < rowsToApply.length; i += BATCH_SIZE){
+      const chunk = rowsToApply.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      for(const r of chunk){
+        const existing = teinItemsCache.find(it=>
+          norm(it.carModel)===norm(r.carModel) &&
+          (it.style||"") === r.style
+        );
+        const payload = {
+          carMake: r.carMake,
+          spec: r.spec,
+          style: r.style,
+          warrantyPrice: r.warrantyPrice,
+          catalogPrice: r.catalogPrice
+        };
+        if(r.remark) payload.remark = r.remark;
 
-    if(existing){
-      batch.update(db.collection("teinItems").doc(existing.id), payload);
-      updated++;
-    } else {
-      batch.set(db.collection("teinItems").doc(), {
-        carModel: r.carModel, brand: "TEIN",
-        remark: r.remark || "", locations: {},
-        ...payload
-      });
-      created++;
+        if(existing){
+          batch.update(db.collection("teinItems").doc(existing.id), payload);
+          updated++;
+        } else {
+          batch.set(db.collection("teinItems").doc(), {
+            carModel: r.carModel, brand: "TEIN",
+            remark: r.remark || "", locations: {},
+            ...payload
+          });
+          created++;
+        }
+      }
+      await batch.commit();
+      statusEl.textContent = `匯入中... 已完成 ${Math.min(i + BATCH_SIZE, total)}/${total} 筆`;
     }
-    opCount++;
-    if(opCount >= 400){ await batch.commit(); batch = db.batch(); opCount = 0; }
-  }
-  if(opCount > 0) await batch.commit();
 
-  statusEl.textContent = `TEIN報價單匯入完成！新增 ${created} 筆車型、更新 ${updated} 筆${skippedCount?`（已跳過疑似備註的 ${skippedCount} 列）`:""}。`;
+    statusEl.textContent = `TEIN報價單匯入完成！新增 ${created} 筆車型、更新 ${updated} 筆${skippedCount?`（已跳過疑似備註的 ${skippedCount} 列）`:""}。`;
+  } catch(e) {
+    statusEl.textContent = `匯入失敗（已完成 ${created + updated} 筆）：${e.message}`;
+  }
 });
