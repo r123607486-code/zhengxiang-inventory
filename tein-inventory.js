@@ -166,7 +166,10 @@ function renderTeinMaster(){
   window._teinMasterFilteredList = list;
 }
 
-function deleteTeinItem(itemId, carModel){
+// ============================================================
+// deleteTeinItem（改用 runTransaction + change log）
+// ============================================================
+async function deleteTeinItem(itemId, carModel){
   if(currentUser.role !== "admin") return;
   const item = teinItemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -176,10 +179,31 @@ function deleteTeinItem(itemId, carModel){
     return;
   }
   if(!confirm(`確定要刪除車型「${carModel}」嗎？此動作無法復原。`)) return;
-  db.collection("teinItems").doc(itemId).delete()
-    .catch(e=>alert("刪除失敗："+e.message));
+
+  const itemRef     = db.collection("teinItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+  try {
+    await db.runTransaction(async (firestoreTxn)=>{
+      const settingsSnap = await firestoreTxn.get(settingsRef);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      firestoreTxn.delete(itemRef);
+
+      firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+        itemId, action:"delete", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    });
+  } catch(e){
+    alert("刪除失敗："+e.message);
+  }
 }
 
+// ============================================================
+// openTeinLocationModal（改用 runTransaction + change log）
+// ============================================================
 function openTeinLocationModal(itemId, code){
   const item = teinItemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -214,15 +238,31 @@ function openTeinLocationModal(itemId, code){
     newLocs[moveTarget] = teinLocQty(newLocs[moveTarget]) + moveQty;
     if(newLocs[code] <= 0) delete newLocs[code];
 
-    db.collection("teinItems").doc(itemId).update({ locations: newLocs })
-      .then(()=>closeModal())
-      .catch(e=>alert("更新失敗："+e.message));
+    const settingsRef = db.collection("settings").doc("teinCache");
+    db.runTransaction(async (firestoreTxn)=>{
+      const settingsSnap = await firestoreTxn.get(settingsRef);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      firestoreTxn.update(db.collection("teinItems").doc(itemId), { locations: newLocs });
+
+      firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+        itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    })
+    .then(()=>closeModal())
+    .catch(e=>alert("更新失敗："+e.message));
   });
 }
 
+// ============================================================
+// editTeinPrice（改用 runTransaction + change log）
+// ============================================================
 function editTeinPrice(itemId, field, label){
   if(currentUser.role !== "admin") return;
-  const item = teinItemsCache.find(i=>i.id===itemId);
+  const item = teinItemsCache.find(i=>i.id===itemId);;
   if(!item) return;
   const cur = item[field]!=null ? String(item[field]) : "";
   const input = prompt(`輸入${label}金額（純數字）`, cur);
@@ -235,7 +275,21 @@ function editTeinPrice(itemId, field, label){
     if(isNaN(num)){ alert("請輸入數字"); return; }
     update[field] = num;
   }
-  db.collection("teinItems").doc(itemId).update(update).catch(e=>alert("更新失敗："+e.message));
+
+  const settingsRef = db.collection("settings").doc("teinCache");
+  db.runTransaction(async (firestoreTxn)=>{
+    const settingsSnap = await firestoreTxn.get(settingsRef);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    firestoreTxn.update(db.collection("teinItems").doc(itemId), update);
+
+    firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("更新失敗："+e.message));
 }
 
 document.getElementById("teinExportBtn").addEventListener("click", ()=>{
