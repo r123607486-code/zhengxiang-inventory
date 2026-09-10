@@ -42,7 +42,7 @@ function renderPadQuery(){
   const q = norm(document.getElementById("padQueryBox").value);
 
   let list = padItemsCache.slice();
-  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||"" ),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
+  if(q){ const qNoH=q.replace(/-/g,""); list=list.filter(it=>{ const cm=norm(it.carModel),yr=norm(it.year||""),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); return cm.includes(q)||yr.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); }); }
   const padQuerySortRank = (it)=> padHasPendingStock(it) ? 0 : (padTotalQty(it)>0 ? 1 : 2);
   list.sort((a,b)=> (padQuerySortRank(a) - padQuerySortRank(b)) || padCompareItems(a,b));
 
@@ -236,7 +236,10 @@ function renderPadMaster(){
   window._padMasterFilteredList = list;
 }
 
-function deletePadItem(itemId, label){
+// ============================================================
+// deletePadItem（改用 runTransaction + change log）
+// ============================================================
+async function deletePadItem(itemId, label){
   if(currentUser.role !== "admin") return;
   const item = padItemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -246,11 +249,33 @@ function deletePadItem(itemId, label){
     return;
   }
   if(!confirm(`確定要刪除規格「${label}」嗎？此動作無法復原。`)) return;
-  db.collection("padItems").doc(itemId).delete()
-    .catch(e=>alert("刪除失敗："+e.message));
+
+  const itemRef     = db.collection("padItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  try {
+    await db.runTransaction(async (firestoreTxn)=>{
+      const settingsSnap = await firestoreTxn.get(settingsRef);
+      const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+      firestoreTxn.delete(itemRef);
+
+      firestoreTxn.set(db.collection("padItemChanges").doc(), {
+        itemId, action:"delete", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    });
+  } catch(e){
+    alert("刪除失敗："+e.message);
+  }
 }
 
-// 儲位搬倉 Modal：移動庫存時同步所有共用同品號的車款卡
+// ============================================================
+// openPadLocationModal（改用 runTransaction + change log）
+// 注意：來令片儲位搬倉要同步所有共用同品號的車款卡
+// runTransaction 最多允許 500 ops，共用品號的車款一般不多，安全範圍內
+// ============================================================
 function openPadLocationModal(itemId, code, side){
   const item = padItemsCache.find(i=>i.id===itemId);
   if(!item) return;
@@ -295,19 +320,34 @@ function openPadLocationModal(itemId, code, side){
       ? padItemsCache.filter(i=> side === "rear" ? i.partNoRear === partNo : i.partNoFront === partNo)
       : [item];
 
-    const batch = db.batch();
-    matching.forEach(mi=>{
-      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-    });
-    try{
-      await batch.commit();
+    const settingsRef = db.collection("settings").doc("padCache");
+    try {
+      await db.runTransaction(async (firestoreTxn)=>{
+        const settingsSnap = await firestoreTxn.get(settingsRef);
+        let newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+        // 每個共用品號的車款都更新儲位，並各寫一筆 change log
+        matching.forEach(mi=>{
+          firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+          firestoreTxn.set(db.collection("padItemChanges").doc(), {
+            itemId: mi.id, action:"update", changeSequence: newSeq,
+            changedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          newSeq++;
+        });
+
+        firestoreTxn.set(settingsRef, { changeSequence: newSeq - 1 }, { merge:true });
+      });
       closeModal();
-    }catch(e){
+    } catch(e){
       alert("更新失敗："+e.message);
     }
   });
 }
 
+// ============================================================
+// editPadPrice（改用 runTransaction + change log）
+// ============================================================
 function editPadPrice(itemId){
   if(currentUser.role !== "admin") return;
   const item = padItemsCache.find(i=>i.id===itemId);
@@ -323,9 +363,26 @@ function editPadPrice(itemId){
     if(isNaN(num)){ alert("請輸入數字"); return; }
     update.price = num;
   }
-  db.collection("padItems").doc(itemId).update(update).catch(e=>alert("更新失敗："+e.message));
+
+  const settingsRef = db.collection("settings").doc("padCache");
+  db.runTransaction(async (firestoreTxn)=>{
+    const settingsSnap = await firestoreTxn.get(settingsRef);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    firestoreTxn.update(db.collection("padItems").doc(itemId), update);
+
+    firestoreTxn.set(db.collection("padItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+  }).catch(e=>alert("更新失敗："+e.message));
 }
 
+// ============================================================
+// editPadImageLinks（改用 runTransaction + change log）
+// ============================================================
 function editPadImageLinks(itemId){
   if(currentUser.role !== "admin") return;
   const item = padItemsCache.find(i=>i.id===itemId);
@@ -336,9 +393,25 @@ function editPadImageLinks(itemId){
   const curRear = item.imageLinkRear || "";
   const inputRear = prompt("貼上「後」圖片連結（不需要就留空）", curRear);
   if(inputRear === null) return;
-  db.collection("padItems").doc(itemId).update({
+
+  const update = {
     imageLinkFront: inputFront.trim() || null,
     imageLinkRear: inputRear.trim() || null
+  };
+
+  const settingsRef = db.collection("settings").doc("padCache");
+  db.runTransaction(async (firestoreTxn)=>{
+    const settingsSnap = await firestoreTxn.get(settingsRef);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    firestoreTxn.update(db.collection("padItems").doc(itemId), update);
+
+    firestoreTxn.set(db.collection("padItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   }).catch(e=>alert("更新失敗："+e.message));
 }
 
