@@ -136,19 +136,37 @@ function openKybTxnModal(){
 }
 
 async function submitKybTxn(itemId, type, qty, loc, salesperson){
-  const itemRef = db.collection("kybItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = kybLocQty(allLocs[loc]);
-  const next = type === "in" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法出貨");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  await db.collection("kybTransactions").add({
-    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
-    salesperson: salesperson || "", editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("kybItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("kybCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = kybLocQty(allLocs[loc]);
+    const next = type === "in" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法出貨");
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(db.collection("kybTransactions").doc(), {
+      itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
+      salesperson: salesperson || "", editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -250,19 +268,37 @@ function openKybAdjustTxnModal(){
 }
 
 async function submitKybAdjustTxn(itemId, adjustSign, qty, loc, reason){
-  const itemRef = db.collection("kybItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = kybLocQty(allLocs[loc]);
-  const next = adjustSign === "+" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法調負這個數量");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  await db.collection("kybTransactions").add({
-    itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
-    operator: currentUser.name, reason, editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("kybItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("kybCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = kybLocQty(allLocs[loc]);
+    const next = adjustSign === "+" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法調負這個數量");
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(db.collection("kybTransactions").doc(), {
+      itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
+      operator: currentUser.name, reason, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -310,37 +346,54 @@ function openEditKybTxnModal(txnId){
 }
 
 async function saveEditKybTxn(t, next){
-  const itemRef = db.collection("kybItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
+  const itemRef     = db.collection("kybItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("kybCache");
+  const txnDocRef   = db.collection("kybTransactions").doc(t.id);
 
-    // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
-    const oldSign = -txnSign(t);
-    const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
-    if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-    // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位）
-    const newSign = txnSign(t);
-    const curAtNewLoc = kybLocQty(allLocs[next.loc]);
-    const resultQty = curAtNewLoc + next.qty*newSign;
-    if(newSign < 0 && resultQty < 0){
-      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = {...(item.locations||{})};
+
+      // 1) 先把「舊紀錄」對庫存的影響完全還原（正向的要扣掉、負向的要加回去）
+      const oldSign = -txnSign(t);
+      const revertedOldQty = kybLocQty(allLocs[t.loc]) + t.qty*oldSign;
+      if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+
+      // 2) 在還原後的庫存基礎上，套用「新紀錄」的內容（方向不變，只改數量／儲位）
+      const newSign = txnSign(t);
+      const curAtNewLoc = kybLocQty(allLocs[next.loc]);
+      const resultQty = curAtNewLoc + next.qty*newSign;
+      if(newSign < 0 && resultQty < 0){
+        throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+      }
+      if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
+
+      firestoreTxn.update(itemRef, { locations: allLocs });
+
+      firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+        itemId: t.itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
     }
-    if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
 
-    await itemRef.update({ locations: allLocs });
-  }
-
-  await db.collection("kybTransactions").doc(t.id).update({
-    date: next.date, qty: next.qty, loc: next.loc,
-    salesperson: next.salesperson, customerName: next.customerName,
-    editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
-      time: new Date().toISOString(), by: currentUser.name
-    })
+    firestoreTxn.update(txnDocRef, {
+      date: next.date, qty: next.qty, loc: next.loc,
+      salesperson: next.salesperson, customerName: next.customerName,
+      editLog: firebase.firestore.FieldValue.arrayUnion({
+        before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+        after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
+        time: new Date().toISOString(), by: currentUser.name
+      })
+    });
   });
 }
 
@@ -348,20 +401,39 @@ async function deleteKybTxn(txnId){
   const t = kybTxnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
-  const itemRef = db.collection("kybItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const sign = -txnSign(t);
-    const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
-    if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
-    await itemRef.update({locations: allLocs});
-  }
-  await db.collection("editLogs").add({
-    txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+  const itemRef     = db.collection("kybItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("kybCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = {...(item.locations||{})};
+      const sign = -txnSign(t);
+      const next = kybLocQty(allLocs[t.loc]) + t.qty*sign;
+      if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
+
+      firestoreTxn.update(itemRef, {locations: allLocs});
+
+      firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+        itemId: t.itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    }
+
+    firestoreTxn.set(db.collection("editLogs").doc(), {
+      txnId, source:"kyb", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+    });
+
+    firestoreTxn.delete(db.collection("kybTransactions").doc(txnId));
   });
-  await db.collection("kybTransactions").doc(txnId).delete();
 }
 
 function openNewKybItemModal(){
@@ -500,23 +572,44 @@ function openConfirmKybOrderModal(orderId){
 }
 
 async function submitKybOrderTxn(order, loc){
-  const itemRef = db.collection("kybItems").doc(order.itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = kybLocQty(allLocs[loc]);
-  if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
-  const next = cur - order.qty;
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  return await db.collection("kybTransactions").add({
-    itemId: order.itemId, type: "out", qty: order.qty, loc,
-    date: todayStr(), operator: currentUser.name,
-    salesperson: order.requestedByName || "", customerName: order.customerName || "",
-    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-    orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("kybItems").doc(order.itemId);
+  const settingsRef = db.collection("settings").doc("kybCache");
+  const newTxnRef   = db.collection("kybTransactions").doc();
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = kybLocQty(allLocs[loc]);
+    if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
+    const next = cur - order.qty;
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(newTxnRef, {
+      itemId: order.itemId, type: "out", qty: order.qty, loc,
+      date: todayStr(), operator: currentUser.name,
+      salesperson: order.requestedByName || "", customerName: order.customerName || "",
+      customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+      orderId: order.id, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+      itemId: order.itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
+
+  return newTxnRef;
 }
 
 function openEditKybOrderModal(orderId){
