@@ -133,19 +133,37 @@ function openTeinTxnModal(){
 }
 
 async function submitTeinTxn(itemId, type, qty, loc, salesperson){
-  const itemRef = db.collection("teinItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = teinLocQty(allLocs[loc]);
-  const next = type === "in" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法出貨");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  await db.collection("teinTransactions").add({
-    itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
-    salesperson: salesperson || "", editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("teinItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = teinLocQty(allLocs[loc]);
+    const next = type === "in" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法出貨");
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(db.collection("teinTransactions").doc(), {
+      itemId, type, qty, loc, date: todayStr(), operator: currentUser.name,
+      salesperson: salesperson || "", editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -243,19 +261,37 @@ function openTeinAdjustTxnModal(){
 }
 
 async function submitTeinAdjustTxn(itemId, adjustSign, qty, loc, reason){
-  const itemRef = db.collection("teinItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = teinLocQty(allLocs[loc]);
-  const next = adjustSign === "+" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法調負這個數量");
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  await db.collection("teinTransactions").add({
-    itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
-    operator: currentUser.name, reason, editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("teinItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = teinLocQty(allLocs[loc]);
+    const next = adjustSign === "+" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法調負這個數量");
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(db.collection("teinTransactions").doc(), {
+      itemId, type: "adjust", adjustSign, qty, loc, date: todayStr(),
+      operator: currentUser.name, reason, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+      itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -300,29 +336,48 @@ function openEditTeinTxnModal(txnId){
 }
 
 async function saveEditTeinTxn(t, next){
-  const itemRef = db.collection("teinItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const oldSign = -txnSign(t);
-    const revertedOldQty = teinLocQty(allLocs[t.loc]) + t.qty*oldSign;
-    if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
-    const newSign = txnSign(t);
-    const curAtNewLoc = teinLocQty(allLocs[next.loc]);
-    const resultQty = curAtNewLoc + next.qty*newSign;
-    if(newSign < 0 && resultQty < 0) throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
-    if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
-    await itemRef.update({ locations: allLocs });
-  }
-  await db.collection("teinTransactions").doc(t.id).update({
-    date: next.date, qty: next.qty, loc: next.loc,
-    salesperson: next.salesperson, customerName: next.customerName,
-    editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-      after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
-      time: new Date().toISOString(), by: currentUser.name
-    })
+  const itemRef     = db.collection("teinItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+  const txnDocRef   = db.collection("teinTransactions").doc(t.id);
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = {...(item.locations||{})};
+      const oldSign = -txnSign(t);
+      const revertedOldQty = teinLocQty(allLocs[t.loc]) + t.qty*oldSign;
+      if(revertedOldQty <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = revertedOldQty;
+      const newSign = txnSign(t);
+      const curAtNewLoc = teinLocQty(allLocs[next.loc]);
+      const resultQty = curAtNewLoc + next.qty*newSign;
+      if(newSign < 0 && resultQty < 0) throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+      if(resultQty <= 0) delete allLocs[next.loc]; else allLocs[next.loc] = resultQty;
+
+      firestoreTxn.update(itemRef, { locations: allLocs });
+
+      firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+        itemId: t.itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    }
+
+    firestoreTxn.update(txnDocRef, {
+      date: next.date, qty: next.qty, loc: next.loc,
+      salesperson: next.salesperson, customerName: next.customerName,
+      editLog: firebase.firestore.FieldValue.arrayUnion({
+        before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+        after: { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
+        time: new Date().toISOString(), by: currentUser.name
+      })
+    });
   });
 }
 
@@ -330,20 +385,39 @@ async function deleteTeinTxn(txnId){
   const t = teinTxnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去）")) return;
-  const itemRef = db.collection("teinItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = {...(item.locations||{})};
-    const sign = -txnSign(t);
-    const next = teinLocQty(allLocs[t.loc]) + t.qty*sign;
-    if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
-    await itemRef.update({locations: allLocs});
-  }
-  await db.collection("editLogs").add({
-    txnId, source:"tein", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+  const itemRef     = db.collection("teinItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = {...(item.locations||{})};
+      const sign = -txnSign(t);
+      const next = teinLocQty(allLocs[t.loc]) + t.qty*sign;
+      if(next <= 0) delete allLocs[t.loc]; else allLocs[t.loc] = next;
+
+      firestoreTxn.update(itemRef, {locations: allLocs});
+
+      firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+        itemId: t.itemId, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    }
+
+    firestoreTxn.set(db.collection("editLogs").doc(), {
+      txnId, source:"tein", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+    });
+
+    firestoreTxn.delete(db.collection("teinTransactions").doc(txnId));
   });
-  await db.collection("teinTransactions").doc(txnId).delete();
 }
 
 function openNewTeinItemModal(){
@@ -480,23 +554,44 @@ function openConfirmTeinOrderModal(orderId){
 }
 
 async function submitTeinOrderTxn(order, loc){
-  const itemRef = db.collection("teinItems").doc(order.itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = {...(item.locations||{})};
-  const cur = teinLocQty(allLocs[loc]);
-  if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
-  const next = cur - order.qty;
-  if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
-  await itemRef.update({locations: allLocs});
-  return await db.collection("teinTransactions").add({
-    itemId: order.itemId, type: "out", qty: order.qty, loc,
-    date: todayStr(), operator: currentUser.name,
-    salesperson: order.requestedByName || "", customerName: order.customerName || "",
-    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-    orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString()
+  const itemRef     = db.collection("teinItems").doc(order.itemId);
+  const settingsRef = db.collection("settings").doc("teinCache");
+  const newTxnRef   = db.collection("teinTransactions").doc();
+
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    const allLocs = {...(item.locations||{})};
+    const cur = teinLocQty(allLocs[loc]);
+    if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
+    const next = cur - order.qty;
+    if(next <= 0) delete allLocs[loc]; else allLocs[loc] = next;
+
+    firestoreTxn.update(itemRef, {locations: allLocs});
+
+    firestoreTxn.set(newTxnRef, {
+      itemId: order.itemId, type: "out", qty: order.qty, loc,
+      date: todayStr(), operator: currentUser.name,
+      salesperson: order.requestedByName || "", customerName: order.customerName || "",
+      customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+      orderId: order.id, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+      itemId: order.itemId, action:"update", changeSequence:newSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
+
+  return newTxnRef;
 }
 
 function openEditTeinOrderModal(orderId){
