@@ -192,30 +192,42 @@ function openPadTxnModal(){
 }
 
 async function submitPadTxn(itemId, type, qty, loc, salesperson, side){
-  const locField = padLocField(side);
-  // 讀主要品項的現有庫存（以使用者看到的那張卡為準）
-  const itemRef = db.collection("padItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = padReadLocs(item, side);
-  const cur = padLocQty(allLocs[loc]);
-  const next = type === "in" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法出貨");
-  const newLocs = {...allLocs};
-  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+  const locField    = padLocField(side);
+  const itemRef     = db.collection("padItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  // 同步所有共用同品號的車款卡（清單在交易外先算好，交易內只做寫入）
+  const matching    = getMatchingPadItems(itemId, side);
 
-  // 同步所有共用同品號的車款卡
-  const matching = getMatchingPadItems(itemId, side);
-  const batch = db.batch();
-  matching.forEach(mi=>{
-    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-  });
-  await batch.commit();
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-  await db.collection("padTransactions").add({
-    itemId, type, qty, loc, side, date: todayStr(), operator: currentUser.name,
-    salesperson: salesperson || "", editLog: [],
-    createdAt: new Date().toISOString()
+    const allLocs = padReadLocs(item, side);
+    const cur = padLocQty(allLocs[loc]);
+    const next = type === "in" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法出貨");
+    const newLocs = {...allLocs};
+    if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+    matching.forEach(mi=>{
+      firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+      firestoreTxn.set(db.collection("padItemChanges").doc(), {
+        itemId: mi.id, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    firestoreTxn.set(db.collection("padTransactions").doc(), {
+      itemId, type, qty, loc, side, date: todayStr(), operator: currentUser.name,
+      salesperson: salesperson || "", editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -311,29 +323,42 @@ function openPadAdjustTxnModal(){
 }
 
 async function submitPadAdjustTxn(itemId, adjustSign, qty, loc, reason, side){
-  const locField = padLocField(side);
-  const itemRef = db.collection("padItems").doc(itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = padReadLocs(item, side);
-  const cur = padLocQty(allLocs[loc]);
-  const next = adjustSign === "+" ? cur + qty : cur - qty;
-  if(next < 0) throw new Error("庫存不足，無法調負這個數量");
-  const newLocs = {...allLocs};
-  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+  const locField    = padLocField(side);
+  const itemRef     = db.collection("padItems").doc(itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  // 同步所有共用同品號的車款卡（清單在交易外先算好，交易內只做寫入）
+  const matching    = getMatchingPadItems(itemId, side);
 
-  // 同步所有共用同品號的車款卡
-  const matching = getMatchingPadItems(itemId, side);
-  const batch = db.batch();
-  matching.forEach(mi=>{
-    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-  });
-  await batch.commit();
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-  await db.collection("padTransactions").add({
-    itemId, type: "adjust", adjustSign, qty, loc, side, date: todayStr(),
-    operator: currentUser.name, reason, editLog: [],
-    createdAt: new Date().toISOString()
+    const allLocs = padReadLocs(item, side);
+    const cur = padLocQty(allLocs[loc]);
+    const next = adjustSign === "+" ? cur + qty : cur - qty;
+    if(next < 0) throw new Error("庫存不足，無法調負這個數量");
+    const newLocs = {...allLocs};
+    if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+    matching.forEach(mi=>{
+      firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+      firestoreTxn.set(db.collection("padItemChanges").doc(), {
+        itemId: mi.id, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    firestoreTxn.set(db.collection("padTransactions").doc(), {
+      itemId, type: "adjust", adjustSign, qty, loc, side, date: todayStr(),
+      operator: currentUser.name, reason, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
   closeModal();
 }
@@ -380,46 +405,60 @@ function openEditPadTxnModal(txnId){
 }
 
 async function saveEditPadTxn(t, next){
-  const side = t.side || "front";
-  const locField = padLocField(side);
-  const itemRef = db.collection("padItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = padReadLocs(item, side);
+  const side        = t.side || "front";
+  const locField    = padLocField(side);
+  const itemRef     = db.collection("padItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  const txnDocRef   = db.collection("padTransactions").doc(t.id);
+  // 同步所有共用同品號的車款卡（清單在交易外先算好，交易內只做寫入）
+  const matching    = getMatchingPadItems(t.itemId, side);
 
-    // 還原舊紀錄的庫存影響
-    const oldSign = -txnSign(t);
-    const revertedOldQty = padLocQty(allLocs[t.loc]) + t.qty*oldSign;
-    const newLocs = {...allLocs};
-    if(revertedOldQty <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = revertedOldQty;
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-    // 套用新紀錄
-    const newSign = txnSign(t);
-    const curAtNewLoc = padLocQty(newLocs[next.loc]);
-    const resultQty = curAtNewLoc + next.qty*newSign;
-    if(newSign < 0 && resultQty < 0){
-      throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = padReadLocs(item, side);
+
+      // 還原舊紀錄的庫存影響
+      const oldSign = -txnSign(t);
+      const revertedOldQty = padLocQty(allLocs[t.loc]) + t.qty*oldSign;
+      const newLocs = {...allLocs};
+      if(revertedOldQty <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = revertedOldQty;
+
+      // 套用新紀錄
+      const newSign = txnSign(t);
+      const curAtNewLoc = padLocQty(newLocs[next.loc]);
+      const resultQty = curAtNewLoc + next.qty*newSign;
+      if(newSign < 0 && resultQty < 0){
+        throw new Error(`這個儲位目前只有 ${curAtNewLoc}，不夠改成 ${next.qty}`);
+      }
+      if(resultQty <= 0) delete newLocs[next.loc]; else newLocs[next.loc] = resultQty;
+
+      matching.forEach(mi=>{
+        firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+        firestoreTxn.set(db.collection("padItemChanges").doc(), {
+          itemId: mi.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
     }
-    if(resultQty <= 0) delete newLocs[next.loc]; else newLocs[next.loc] = resultQty;
 
-    // 同步所有共用同品號的車款卡
-    const matching = getMatchingPadItems(t.itemId, side);
-    const batch = db.batch();
-    matching.forEach(mi=>{
-      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+    firestoreTxn.update(txnDocRef, {
+      date: next.date, qty: next.qty, loc: next.loc,
+      salesperson: next.salesperson, customerName: next.customerName,
+      editLog: firebase.firestore.FieldValue.arrayUnion({
+        before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
+        after:  { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
+        time: new Date().toISOString(), by: currentUser.name
+      })
     });
-    await batch.commit();
-  }
-
-  await db.collection("padTransactions").doc(t.id).update({
-    date: next.date, qty: next.qty, loc: next.loc,
-    salesperson: next.salesperson, customerName: next.customerName,
-    editLog: firebase.firestore.FieldValue.arrayUnion({
-      before: { date:t.date||null, qty:t.qty, loc:t.loc, salesperson:t.salesperson||"", customerName:t.customerName||"" },
-      after:  { date:next.date, qty:next.qty, loc:next.loc, salesperson:next.salesperson, customerName:next.customerName },
-      time: new Date().toISOString(), by: currentUser.name
-    })
   });
 }
 
@@ -427,30 +466,45 @@ async function deletePadTxn(txnId){
   const t = padTxnCache.find(x=>x.id===txnId);
   if(!t) return;
   if(!confirm("確定要刪除這筆紀錄嗎？（會自動把庫存改回去，並保留異動歷程）")) return;
-  const side = t.side || "front";
-  const locField = padLocField(side);
-  const itemRef = db.collection("padItems").doc(t.itemId);
-  const itemSnap = await itemRef.get();
-  if(itemSnap.exists){
-    const item = itemSnap.data();
-    const allLocs = padReadLocs(item, side);
-    const sign = -txnSign(t);
-    const next = padLocQty(allLocs[t.loc]) + t.qty*sign;
-    const newLocs = {...allLocs};
-    if(next <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = next;
+  const side        = t.side || "front";
+  const locField    = padLocField(side);
+  const itemRef     = db.collection("padItems").doc(t.itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  // 同步所有共用同品號的車款卡（清單在交易外先算好，交易內只做寫入）
+  const matching    = getMatchingPadItems(t.itemId, side);
 
-    // 同步所有共用同品號的車款卡
-    const matching = getMatchingPadItems(t.itemId, side);
-    const batch = db.batch();
-    matching.forEach(mi=>{
-      batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+    if(itemSnap.exists){
+      const item = itemSnap.data();
+      const allLocs = padReadLocs(item, side);
+      const sign = -txnSign(t);
+      const next = padLocQty(allLocs[t.loc]) + t.qty*sign;
+      const newLocs = {...allLocs};
+      if(next <= 0) delete newLocs[t.loc]; else newLocs[t.loc] = next;
+
+      matching.forEach(mi=>{
+        firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+        firestoreTxn.set(db.collection("padItemChanges").doc(), {
+          itemId: mi.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+    }
+
+    firestoreTxn.set(db.collection("editLogs").doc(), {
+      txnId, source:"pad", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
     });
-    await batch.commit();
-  }
-  await db.collection("editLogs").add({
-    txnId, source:"pad", action:"delete", before:t, time:new Date().toISOString(), by:currentUser.name
+
+    firestoreTxn.delete(db.collection("padTransactions").doc(txnId));
   });
-  await db.collection("padTransactions").doc(txnId).delete();
 }
 
 function openNewPadItemModal(){
@@ -596,34 +650,50 @@ function openConfirmPadOrderModal(orderId){
 }
 
 async function submitPadOrderTxn(order, loc){
-  const side = order.side || "front";
-  const locField = padLocField(side);
-  const itemRef = db.collection("padItems").doc(order.itemId);
-  const itemSnap = await itemRef.get();
-  const item = itemSnap.data();
-  const allLocs = padReadLocs(item, side);
-  const cur = padLocQty(allLocs[loc]);
-  if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
-  const next = cur - order.qty;
-  const newLocs = {...allLocs};
-  if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+  const side        = order.side || "front";
+  const locField    = padLocField(side);
+  const itemRef     = db.collection("padItems").doc(order.itemId);
+  const settingsRef = db.collection("settings").doc("padCache");
+  const newTxnRef   = db.collection("padTransactions").doc();
+  // 同步所有共用同品號的車款卡（清單在交易外先算好，交易內只做寫入）
+  const matching    = getMatchingPadItems(order.itemId, side);
 
-  // 同步所有共用同品號的車款卡
-  const matching = getMatchingPadItems(order.itemId, side);
-  const batch = db.batch();
-  matching.forEach(mi=>{
-    batch.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
-  });
-  await batch.commit();
+  await db.runTransaction(async (firestoreTxn)=>{
+    const [itemSnap, settingsSnap] = await Promise.all([
+      firestoreTxn.get(itemRef),
+      firestoreTxn.get(settingsRef)
+    ]);
+    const item   = itemSnap.data();
+    const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
 
-  return await db.collection("padTransactions").add({
-    itemId: order.itemId, type: "out", qty: order.qty, loc, side,
-    date: todayStr(), operator: currentUser.name,
-    salesperson: order.requestedByName || "", customerName: order.customerName || "",
-    customerContact: order.customerContact || "", customerNote: order.customerNote || "",
-    orderId: order.id, editLog: [],
-    createdAt: new Date().toISOString()
+    const allLocs = padReadLocs(item, side);
+    const cur = padLocQty(allLocs[loc]);
+    if(cur < order.qty) throw new Error("這個儲位庫存不足，請重新選擇");
+    const next = cur - order.qty;
+    const newLocs = {...allLocs};
+    if(next <= 0) delete newLocs[loc]; else newLocs[loc] = next;
+
+    matching.forEach(mi=>{
+      firestoreTxn.update(db.collection("padItems").doc(mi.id), {[locField]: newLocs});
+      firestoreTxn.set(db.collection("padItemChanges").doc(), {
+        itemId: mi.id, action:"update", changeSequence:newSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    firestoreTxn.set(newTxnRef, {
+      itemId: order.itemId, type: "out", qty: order.qty, loc, side,
+      date: todayStr(), operator: currentUser.name,
+      salesperson: order.requestedByName || "", customerName: order.customerName || "",
+      customerContact: order.customerContact || "", customerNote: order.customerNote || "",
+      orderId: order.id, editLog: [],
+      createdAt: new Date().toISOString()
+    });
+
+    firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
   });
+
+  return newTxnRef;
 }
 
 function openEditPadOrderModal(orderId){
