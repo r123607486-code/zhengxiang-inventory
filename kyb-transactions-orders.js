@@ -459,16 +459,36 @@ function openNewKybItemModal(){
     const carModel = document.getElementById("newKybModel").value.trim();
     if(!carModel){ alert("請輸入車型"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
-    await db.collection("kybItems").add({
-      carModel, brand:"KYB",
-      carMake: document.getElementById("newKybMake").value.trim(),
-      bucketType: document.getElementById("newKybBucket").value,
-      yearCode: document.getElementById("newKybYearCode").value.trim(),
-      partNo: document.getElementById("newKybPartNo").value.trim(),
-      remark: document.getElementById("newKybRemark").value.trim(),
-      locations:{}, catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
-    });
-    closeModal();
+
+    // 預先建立 ref 以在 transaction 中使用 set（而非 add），並同步寫入 change log
+    const itemRef     = db.collection("kybItems").doc();
+    const settingsRef = db.collection("settings").doc("kybCache");
+    try {
+      await db.runTransaction(async (firestoreTxn)=>{
+        const settingsSnap = await firestoreTxn.get(settingsRef);
+        const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+        firestoreTxn.set(itemRef, {
+          carModel, brand:"KYB",
+          carMake: document.getElementById("newKybMake").value.trim(),
+          bucketType: document.getElementById("newKybBucket").value,
+          yearCode: document.getElementById("newKybYearCode").value.trim(),
+          partNo: document.getElementById("newKybPartNo").value.trim(),
+          remark: document.getElementById("newKybRemark").value.trim(),
+          locations:{}, catalogPrice: toNum("newKybCatalogPrice"), warrantyPrice: toNum("newKybWarrantyPrice")
+        });
+
+        firestoreTxn.set(db.collection("kybItemChanges").doc(), {
+          itemId: itemRef.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+      });
+      closeModal();
+    } catch(e){
+      alert("建立失敗："+e.message);
+    }
   });
 }
 

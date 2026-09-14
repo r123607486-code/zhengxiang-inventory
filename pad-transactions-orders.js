@@ -528,20 +528,40 @@ function openNewPadItemModal(){
     const carModel = document.getElementById("newPadModel").value.trim();
     if(!carModel){ alert("請輸入車款"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
-    await db.collection("padItems").add({
-      carModel, brand:"YangPo",
-      year: document.getElementById("newPadYear").value.trim(),
-      spec: document.getElementById("newPadSpec").value.trim(),
-      partNoFront: document.getElementById("newPadPartFront").value.trim(),
-      fmsiFront: document.getElementById("newPadFmsiFront").value.trim(),
-      partNoRear: document.getElementById("newPadPartRear").value.trim(),
-      fmsiRear: document.getElementById("newPadFmsiRear").value.trim(),
-      remark: document.getElementById("newPadRemark").value.trim(),
-      locationsFront:{}, locationsRear:{},
-      price: toNum("newPadPrice"),
-      imageLinkFront: null, imageLinkRear: null
-    });
-    closeModal();
+
+    // 預先建立 ref 以在 transaction 中使用 set（而非 add），並同步寫入 change log
+    const itemRef     = db.collection("padItems").doc();
+    const settingsRef = db.collection("settings").doc("padCache");
+    try {
+      await db.runTransaction(async (firestoreTxn)=>{
+        const settingsSnap = await firestoreTxn.get(settingsRef);
+        const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+        firestoreTxn.set(itemRef, {
+          carModel, brand:"YangPo",
+          year: document.getElementById("newPadYear").value.trim(),
+          spec: document.getElementById("newPadSpec").value.trim(),
+          partNoFront: document.getElementById("newPadPartFront").value.trim(),
+          fmsiFront: document.getElementById("newPadFmsiFront").value.trim(),
+          partNoRear: document.getElementById("newPadPartRear").value.trim(),
+          fmsiRear: document.getElementById("newPadFmsiRear").value.trim(),
+          remark: document.getElementById("newPadRemark").value.trim(),
+          locationsFront:{}, locationsRear:{},
+          price: toNum("newPadPrice"),
+          imageLinkFront: null, imageLinkRear: null
+        });
+
+        firestoreTxn.set(db.collection("padItemChanges").doc(), {
+          itemId: itemRef.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+      });
+      closeModal();
+    } catch(e){
+      alert("建立失敗："+e.message);
+    }
   });
 }
 

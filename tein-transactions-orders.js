@@ -441,17 +441,37 @@ function openNewTeinItemModal(){
     const carModel = document.getElementById("newTeinModel").value.trim();
     if(!carModel){ alert("請輸入車型"); return; }
     const toNum = (id)=>{ const v = document.getElementById(id).value; return v===""?null:Number(v); };
-    await db.collection("teinItems").add({
-      carModel, brand:"TEIN",
-      carMake: document.getElementById("newTeinMake").value.trim(),
-      spec: document.getElementById("newTeinSpec").value.trim(),
-      style: document.getElementById("newTeinStyle").value,
-      remark: document.getElementById("newTeinRemark").value.trim(),
-      locations:{},
-      warrantyPrice: toNum("newTeinWarrantyPrice"),
-      catalogPrice: toNum("newTeinCatalogPrice")
-    });
-    closeModal();
+
+    // 預先建立 ref 以在 transaction 中使用 set（而非 add），並同步寫入 change log
+    const itemRef     = db.collection("teinItems").doc();
+    const settingsRef = db.collection("settings").doc("teinCache");
+    try {
+      await db.runTransaction(async (firestoreTxn)=>{
+        const settingsSnap = await firestoreTxn.get(settingsRef);
+        const newSeq = (settingsSnap.exists ? (settingsSnap.data().changeSequence||0) : 0) + 1;
+
+        firestoreTxn.set(itemRef, {
+          carModel, brand:"TEIN",
+          carMake: document.getElementById("newTeinMake").value.trim(),
+          spec: document.getElementById("newTeinSpec").value.trim(),
+          style: document.getElementById("newTeinStyle").value,
+          remark: document.getElementById("newTeinRemark").value.trim(),
+          locations:{},
+          warrantyPrice: toNum("newTeinWarrantyPrice"),
+          catalogPrice: toNum("newTeinCatalogPrice")
+        });
+
+        firestoreTxn.set(db.collection("teinItemChanges").doc(), {
+          itemId: itemRef.id, action:"update", changeSequence:newSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        firestoreTxn.set(settingsRef, { changeSequence:newSeq }, { merge:true });
+      });
+      closeModal();
+    } catch(e){
+      alert("建立失敗："+e.message);
+    }
   });
 }
 
