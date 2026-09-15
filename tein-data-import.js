@@ -93,6 +93,11 @@ document.getElementById("teinImportBtn").addEventListener("click", async ()=>{
 
   let created = 0, updated = 0;
   try {
+    // 讀取目前序號，這次匯入整批只會讓序號 +1，其他裝置比對到序號變化後才會去抓有變更紀錄的品項
+    const teinSettingsRef = db.collection("settings").doc("teinCache");
+    const teinSettingsSnap0 = await teinSettingsRef.get();
+    const teinNewSeq = (teinSettingsSnap0.exists ? (teinSettingsSnap0.data().changeSequence||0) : 0) + 1;
+
     const BATCH_SIZE = 200;
     for(let i = 0; i < rowsToApply.length; i += BATCH_SIZE){
       const chunk = rowsToApply.slice(i, i + BATCH_SIZE);
@@ -104,16 +109,27 @@ document.getElementById("teinImportBtn").addEventListener("click", async ()=>{
         );
         const payload = { carMake: r.carMake, spec: r.spec, style: r.style, warrantyPrice: r.warrantyPrice, catalogPrice: r.catalogPrice };
         if(r.remark) payload.remark = r.remark;
+        let changedItemId;
         if(existing){
           batch.update(db.collection("teinItems").doc(existing.id), payload);
+          changedItemId = existing.id;
           updated++;
         } else {
-          batch.set(db.collection("teinItems").doc(), { carModel: r.carModel, brand: "TEIN", remark: r.remark || "", locations: {}, ...payload });
+          const ref = db.collection("teinItems").doc();
+          batch.set(ref, { carModel: r.carModel, brand: "TEIN", remark: r.remark || "", locations: {}, ...payload });
+          changedItemId = ref.id;
           created++;
         }
+        batch.set(db.collection("teinItemChanges").doc(), {
+          itemId: changedItemId, action:"update", changeSequence: teinNewSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
       }
       await batch.commit();
       statusEl.textContent = `匯入中... 已完成 ${Math.min(i + BATCH_SIZE, total)}/${total} 筆`;
+    }
+    if(rowsToApply.length > 0){
+      await teinSettingsRef.set({ changeSequence: teinNewSeq }, { merge:true });
     }
     statusEl.textContent = `TEIN報價單匯入完成！新增 ${created} 筆車型、更新 ${updated} 筆${skippedCount?`（已跳過疑似備註的 ${skippedCount} 列）`:""}。`;
   } catch(e) {
@@ -197,6 +213,11 @@ document.getElementById("teinStockImportBtn").addEventListener("click", async ()
   let ok = 0, skip = 0;
 
   try {
+    // 讀取目前序號，這次匯入整批只會讓序號 +1，其他裝置比對到序號變化後才會去抓有變更紀錄的品項
+    const teinSettingsRef = db.collection("settings").doc("teinCache");
+    const teinSettingsSnap0 = await teinSettingsRef.get();
+    const teinNewSeq = (teinSettingsSnap0.exists ? (teinSettingsSnap0.data().changeSequence||0) : 0) + 1;
+
     const BATCH_SIZE = 200;
     for(let i = 0; i < toUpdate.length; i += BATCH_SIZE){
       const chunk = toUpdate.slice(i, i + BATCH_SIZE);
@@ -223,10 +244,17 @@ document.getElementById("teinStockImportBtn").addEventListener("click", async ()
         }
 
         batch.update(db.collection("teinItems").doc(item.id), { locations: newLocs });
+        batch.set(db.collection("teinItemChanges").doc(), {
+          itemId: item.id, action:"update", changeSequence: teinNewSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
         ok++;
       }
       await batch.commit();
       statusEl.textContent = `更新中... 已完成 ${Math.min(i + BATCH_SIZE, toUpdate.length)}/${toUpdate.length} 筆`;
+    }
+    if(ok > 0){
+      await teinSettingsRef.set({ changeSequence: teinNewSeq }, { merge:true });
     }
     statusEl.textContent = `庫存更新完成！成功 ${ok} 筆${skip?`，跳過 ${skip} 筆（找不到對應車型或無儲位）`:""}。`;
   } catch(e) {

@@ -92,17 +92,29 @@ document.getElementById("importBtn").addEventListener("click", async ()=>{
     }
   }
 
+  // 讀取目前序號，這次匯入整批只會讓序號 +1，其他裝置比對到序號變化後才會去抓有變更紀錄的品項
+  const tireSettingsRef = db.collection("settings").doc("tireCache");
+  const tireSettingsSnap0 = await tireSettingsRef.get();
+  const tireNewSeq = (tireSettingsSnap0.exists ? (tireSettingsSnap0.data().changeSequence||0) : 0) + 1;
+
   let count = 0;
   while(count < newItems.length){
     const batch = db.batch();
-    const chunk = newItems.slice(count, count+400);
+    const chunk = newItems.slice(count, count+200);
     chunk.forEach(it=>{
       const ref = db.collection("items").doc();
       batch.set(ref, it);
+      batch.set(db.collection("tireItemChanges").doc(), {
+        itemId: ref.id, action:"update", changeSequence: tireNewSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
     });
     await batch.commit();
     count += chunk.length;
     statusEl.textContent = `匯入中...已完成 ${count}/${newItems.length}`;
+  }
+  if(newItems.length > 0){
+    await tireSettingsRef.set({ changeSequence: tireNewSeq }, { merge:true });
   }
 
   statusEl.textContent = `匯入完成！共新增 ${newItems.length} 筆品項。可以到「庫存查詢」或「庫存總表」查看。`;
@@ -184,22 +196,37 @@ async function tryImportSailunSheet(wb, statusEl){
   statusEl.textContent = `偵測到賽輪總表，共 ${rowsToApply.length} 筆規格（已跳過備註含「下市」的 ${skippedCount} 筆），匯入中...`;
 
   let created = 0, updated = 0;
+  const tireSettingsRef = db.collection("settings").doc("tireCache");
+  const tireSettingsSnap0 = await tireSettingsRef.get();
+  const tireNewSeq = (tireSettingsSnap0.exists ? (tireSettingsSnap0.data().changeSequence||0) : 0) + 1;
   let batch = db.batch();
   let opCount = 0;
+  let anyChange = false;
   for(const r of rowsToApply){
     const existing = itemsCache.find(it=> norm(it.brand)===norm("賽輪Sailun") && norm(it.spec)===norm(r.spec) && norm(it.model)===norm(r.model));
+    let changedItemId;
     if(existing){
       batch.update(db.collection("items").doc(existing.id), { twenty: r.twenty, sellPrice: r.sellPrice });
+      changedItemId = existing.id;
       updated++;
     } else {
       const ref = db.collection("items").doc();
       batch.set(ref, { brand:"賽輪Sailun", model:r.model, spec:r.spec, remark:"", locations:{}, twenty:r.twenty, sellPrice:r.sellPrice });
+      changedItemId = ref.id;
       created++;
     }
-    opCount++;
+    batch.set(db.collection("tireItemChanges").doc(), {
+      itemId: changedItemId, action:"update", changeSequence: tireNewSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    anyChange = true;
+    opCount += 2;
     if(opCount >= 400){ await batch.commit(); batch = db.batch(); opCount = 0; }
   }
   if(opCount > 0) await batch.commit();
+  if(anyChange){
+    await tireSettingsRef.set({ changeSequence: tireNewSeq }, { merge:true });
+  }
 
   statusEl.textContent = `賽輪總表匯入完成！新增 ${created} 筆、更新20%／售價 ${updated} 筆（跳過備註含「下市」的 ${skippedCount} 筆）。`;
   return true;
@@ -219,8 +246,12 @@ async function tryImportTireListSheet(wb, statusEl){
   statusEl.textContent = `偵測到庫存總表格式，共 ${rows.length} 筆，更新中...`;
 
   let created = 0, updated = 0;
+  const tireSettingsRef = db.collection("settings").doc("tireCache");
+  const tireSettingsSnap0 = await tireSettingsRef.get();
+  const tireNewSeq = (tireSettingsSnap0.exists ? (tireSettingsSnap0.data().changeSequence||0) : 0) + 1;
   let batch = db.batch();
   let opCount = 0;
+  let anyChange = false;
 
   for(const r of rows){
     const brand = (r["品牌"]||"").toString().trim();
@@ -237,17 +268,29 @@ async function tryImportTireListSheet(wb, statusEl){
       norm(it.spec)===norm(spec)
     );
 
+    let changedItemId;
     if(existing){
       batch.update(db.collection("items").doc(existing.id), {brand, model, spec, twenty, sellPrice, remark});
+      changedItemId = existing.id;
       updated++;
     } else {
-      batch.set(db.collection("items").doc(), {brand, model, spec, remark, locations:{}, twenty, sellPrice});
+      const ref = db.collection("items").doc();
+      batch.set(ref, {brand, model, spec, remark, locations:{}, twenty, sellPrice});
+      changedItemId = ref.id;
       created++;
     }
-    opCount++;
+    batch.set(db.collection("tireItemChanges").doc(), {
+      itemId: changedItemId, action:"update", changeSequence: tireNewSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    anyChange = true;
+    opCount += 2;
     if(opCount>=400){ await batch.commit(); batch=db.batch(); opCount=0; }
   }
   if(opCount>0) await batch.commit();
+  if(anyChange){
+    await tireSettingsRef.set({ changeSequence: tireNewSeq }, { merge:true });
+  }
 
   statusEl.textContent = `庫存總表更新完成！新增 ${created} 筆、更新 ${updated} 筆（庫存與儲位不受影響）。`;
   return true;
@@ -340,8 +383,12 @@ async function tryImportKybSheet(wb, statusEl){
   statusEl.textContent = `偵測到KYB報價單（${detected.format==='new'?'新版含桶色/廠牌/料號':'舊版'}），共 ${rowsToApply.length} 筆車型${skippedNoteCount?`（已跳過看起來像備註文字的 ${skippedNoteCount} 列）`:""}，匯入中...`;
 
   let created = 0, updated = 0;
+  const kybSettingsRef = db.collection("settings").doc("kybCache");
+  const kybSettingsSnap0 = await kybSettingsRef.get();
+  const kybNewSeq = (kybSettingsSnap0.exists ? (kybSettingsSnap0.data().changeSequence||0) : 0) + 1;
   let batch = db.batch();
   let opCount = 0;
+  let anyChange = false;
   for(const r of rowsToApply){
     const existing = kybItemsCache.find(it=> norm(it.carModel)===norm(r.carModel) && (it.bucketType||"")===r.bucketType);
     const payload = {
@@ -349,8 +396,10 @@ async function tryImportKybSheet(wb, statusEl){
       catalogPrice: r.catalogPrice, warrantyPrice: r.warrantyPrice
     };
     if(r.remark) payload.remark = r.remark;
+    let changedItemId;
     if(existing){
       batch.update(db.collection("kybItems").doc(existing.id), payload);
+      changedItemId = existing.id;
       updated++;
     } else {
       const ref = db.collection("kybItems").doc();
@@ -358,12 +407,21 @@ async function tryImportKybSheet(wb, statusEl){
         carModel: r.carModel, brand: "KYB", remark: r.remark || "", locations: {},
         ...payload
       });
+      changedItemId = ref.id;
       created++;
     }
-    opCount++;
+    batch.set(db.collection("kybItemChanges").doc(), {
+      itemId: changedItemId, action:"update", changeSequence: kybNewSeq,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    anyChange = true;
+    opCount += 2;
     if(opCount >= 400){ await batch.commit(); batch = db.batch(); opCount = 0; }
   }
   if(opCount > 0) await batch.commit();
+  if(anyChange){
+    await kybSettingsRef.set({ changeSequence: kybNewSeq }, { merge:true });
+  }
 
   statusEl.textContent = `KYB報價單匯入完成！新增 ${created} 筆車型、更新 ${updated} 筆${skippedNoteCount?`（已跳過看起來像備註文字的 ${skippedNoteCount} 列）`:""}。`;
   return true;

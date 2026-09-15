@@ -70,16 +70,25 @@ async function tryImportPadSheet(wb, statusEl){
     ]);
   }
 
+  // 讀取目前序號，這次匯入整批只會讓序號 +1，其他裝置比對到序號變化後才會去抓有變更紀錄的品項
+  const padSettingsRef = db.collection("settings").doc("padCache");
+  const padSettingsSnap0 = await padSettingsRef.get();
+  const padNewSeq = (padSettingsSnap0.exists ? (padSettingsSnap0.data().changeSequence||0) : 0) + 1;
+
   let count = 0;
   let batchNum = 0;
-  const totalBatches = Math.ceil(newItems.length / 400);
+  const totalBatches = Math.ceil(newItems.length / 200);
   while(count < newItems.length){
     batchNum++;
     const batch = db.batch();
-    const chunk = newItems.slice(count, count+400);
+    const chunk = newItems.slice(count, count+200);
     chunk.forEach(it=>{
       const ref = db.collection("padItems").doc();
       batch.set(ref, it);
+      batch.set(db.collection("padItemChanges").doc(), {
+        itemId: ref.id, action:"update", changeSequence: padNewSeq,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
     });
     statusEl.textContent = `匯入中...正在寫入第 ${batchNum}/${totalBatches} 批（共 ${newItems.length} 筆）`;
     try{
@@ -91,6 +100,9 @@ async function tryImportPadSheet(wb, statusEl){
     }
     count += chunk.length;
     statusEl.textContent = `匯入中...已完成 ${count}/${newItems.length}`;
+  }
+  if(newItems.length > 0){
+    await padSettingsRef.set({ changeSequence: padNewSeq }, { merge:true });
   }
 
   statusEl.textContent = `匯入完成！共新增 ${newItems.length} 筆來令片品項${skipped?`（另跳過 ${skipped} 筆沒有車款的空列）`:""}。可以到「庫存查詢」或「庫存總表」查看。`;
@@ -168,9 +180,12 @@ if(padMigrateLocBtn){
 
     statusEl.textContent = `找到 ${toMigrate.length} 筆需要遷移，寫入中...`;
     const deleteField = firebase.firestore.FieldValue.delete();
+    const padSettingsRef = db.collection("settings").doc("padCache");
+    const padSettingsSnap0 = await padSettingsRef.get();
+    const padNewSeq = (padSettingsSnap0.exists ? (padSettingsSnap0.data().changeSequence||0) : 0) + 1;
     let done = 0;
     while(done < toMigrate.length){
-      const chunk = toMigrate.slice(done, done+400);
+      const chunk = toMigrate.slice(done, done+200);
       const batch = db.batch();
       chunk.forEach(doc=>{
         const locs = doc.data().locations || {};
@@ -178,6 +193,10 @@ if(padMigrateLocBtn){
           locationsFront: locs,
           locationsRear: {},
           locations: deleteField
+        });
+        batch.set(db.collection("padItemChanges").doc(), {
+          itemId: doc.id, action:"update", changeSequence: padNewSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
       });
       try{
@@ -188,6 +207,9 @@ if(padMigrateLocBtn){
       }
       done += chunk.length;
       statusEl.textContent = `遷移中...已完成 ${done}/${toMigrate.length}`;
+    }
+    if(toMigrate.length > 0){
+      await padSettingsRef.set({ changeSequence: padNewSeq }, { merge:true });
     }
     statusEl.textContent = `遷移完成！共遷移 ${toMigrate.length} 筆品項。請重新整理頁面讓畫面更新。`;
   });
@@ -258,14 +280,26 @@ document.getElementById("padImageLinkBtn").addEventListener("click", async ()=>{
     }
 
     statusEl.textContent = `比對到 ${toUpdate.length} 筆品項，更新中...`;
+    const padSettingsRef = db.collection("settings").doc("padCache");
+    const padSettingsSnap0 = await padSettingsRef.get();
+    const padNewSeq = (padSettingsSnap0.exists ? (padSettingsSnap0.data().changeSequence||0) : 0) + 1;
     let count = 0;
     while(count < toUpdate.length){
       const batch = db.batch();
-      const chunk = toUpdate.slice(count, count+400);
-      chunk.forEach(u=> batch.update(db.collection("padItems").doc(u.id), u.payload));
+      const chunk = toUpdate.slice(count, count+200);
+      chunk.forEach(u=>{
+        batch.update(db.collection("padItems").doc(u.id), u.payload);
+        batch.set(db.collection("padItemChanges").doc(), {
+          itemId: u.id, action:"update", changeSequence: padNewSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
       await batch.commit();
       count += chunk.length;
       statusEl.textContent = `更新中...已完成 ${count}/${toUpdate.length}`;
+    }
+    if(toUpdate.length > 0){
+      await padSettingsRef.set({ changeSequence: padNewSeq }, { merge:true });
     }
     statusEl.textContent = `完成！共更新 ${toUpdate.length} 筆品項的圖片連結（共 ${linkMap.size} 筆品號連結中，比對到 ${toUpdate.length} 筆，其餘沒有對到的品項未被更動）。`;
   } catch(err){
@@ -371,15 +405,27 @@ document.getElementById("padStockImportBtn").addEventListener("click", async ()=
     }
 
     statusEl.textContent = `比對到 ${updateMap.size} 筆品項，寫入庫存中...`;
+    const padSettingsRef = db.collection("settings").doc("padCache");
+    const padSettingsSnap0 = await padSettingsRef.get();
+    const padNewSeq = (padSettingsSnap0.exists ? (padSettingsSnap0.data().changeSequence||0) : 0) + 1;
     const entries = Array.from(updateMap.entries());
     let count = 0;
     while(count < entries.length){
       const batch = db.batch();
-      const chunk = entries.slice(count, count+400);
-      chunk.forEach(([id, payload])=> batch.update(db.collection("padItems").doc(id), payload));
+      const chunk = entries.slice(count, count+200);
+      chunk.forEach(([id, payload])=>{
+        batch.update(db.collection("padItems").doc(id), payload);
+        batch.set(db.collection("padItemChanges").doc(), {
+          itemId: id, action:"update", changeSequence: padNewSeq,
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
       await batch.commit();
       count += chunk.length;
       statusEl.textContent = `寫入中...已完成 ${count}/${entries.length}`;
+    }
+    if(entries.length > 0){
+      await padSettingsRef.set({ changeSequence: padNewSeq }, { merge:true });
     }
     const newLocMsg = newLocCodes.size ? `（自動建立了 ${newLocCodes.size} 個新儲位：${Array.from(newLocCodes).join("、")}）` : "";
     statusEl.textContent = `完成！共更新 ${updateMap.size} 筆品項的庫存${newLocMsg}。請重新整理頁面查看最新庫存。`;
