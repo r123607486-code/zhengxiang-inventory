@@ -99,7 +99,11 @@ function openKybTxnModal(){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("kybTxnItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
+    // 開頭符合 q 的排最前面，再取前 30 筆，避免符合太多筆時想找的那個被擠到清單外
+    const matches = kybItemsCache
+      .filter(it=> norm(it.carModel).includes(q))
+      .sort((a,b)=> (norm(a.carModel).startsWith(q)?0:1) - (norm(b.carModel).startsWith(q)?0:1))
+      .slice(0,30);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
@@ -227,7 +231,11 @@ function openKybAdjustTxnModal(){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("kybAdjustItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
+    // 開頭符合 q 的排最前面，再取前 30 筆，避免符合太多筆時想找的那個被擠到清單外
+    const matches = kybItemsCache
+      .filter(it=> norm(it.carModel).includes(q))
+      .sort((a,b)=> (norm(a.carModel).startsWith(q)?0:1) - (norm(b.carModel).startsWith(q)?0:1))
+      .slice(0,30);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
@@ -672,7 +680,11 @@ function openEditKybOrderModal(orderId){
     const q = norm(searchInput.value);
     const listEl = document.getElementById("editKybOrderItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = kybItemsCache.filter(it=> norm(it.carModel).includes(q)).slice(0,15);
+    // 開頭符合 q 的排最前面，再取前 30 筆，避免符合太多筆時想找的那個被擠到清單外
+    const matches = kybItemsCache
+      .filter(it=> norm(it.carModel).includes(q))
+      .sort((a,b)=> (norm(a.carModel).startsWith(q)?0:1) - (norm(b.carModel).startsWith(q)?0:1))
+      .slice(0,30);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
