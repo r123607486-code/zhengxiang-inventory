@@ -93,11 +93,13 @@ function openTeinTxnModal(){
   document.getElementById("teinTxnType").addEventListener("change", refreshLocOptions);
 
   const searchInput = document.getElementById("teinTxnItemSearch");
+  document.getElementById("teinTxnType").addEventListener("change", ()=>{ if(searchInput.value) searchInput.dispatchEvent(new Event("input")); });
   searchInput.addEventListener("input", ()=>{
     const q = norm(searchInput.value);
     const listEl = document.getElementById("teinTxnItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = teinItemsCache.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake||"").includes(q) || norm(it.style||"").includes(q)).slice(0,15);
+    const outMode = document.getElementById("teinTxnType").value === "out";
+    const matches = teinItemsCache.filter(it=>{ const hit = norm(it.carModel).includes(q) || norm(it.carMake||"").includes(q) || norm(it.style||"").includes(q); if(!hit) return false; if(outMode && teinTotalQty(it)<=0) return false; return true; }).slice(0,15);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(teinItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
@@ -218,11 +220,13 @@ function openTeinAdjustTxnModal(){
   document.getElementById("teinAdjustSign").addEventListener("change", refreshLocOptions);
 
   const searchInput = document.getElementById("teinAdjustItemSearch");
+  document.getElementById("teinAdjustSign").addEventListener("change", ()=>{ if(searchInput.value) searchInput.dispatchEvent(new Event("input")); });
   searchInput.addEventListener("input", ()=>{
     const q = norm(searchInput.value);
     const listEl = document.getElementById("teinAdjustItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
-    const matches = teinItemsCache.filter(it=> norm(it.carModel).includes(q) || norm(it.carMake||"").includes(q)).slice(0,15);
+    const outMode = document.getElementById("teinAdjustSign").value === "-";
+    const matches = teinItemsCache.filter(it=>{ const hit = norm(it.carModel).includes(q) || norm(it.carMake||"").includes(q); if(!hit) return false; if(outMode && teinTotalQty(it)<=0) return false; return true; }).slice(0,15);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(teinItemLabel(it))}</div>`).join("");
     listEl.classList.toggle("hidden", matches.length===0);
     listEl.querySelectorAll("div").forEach(d=>d.addEventListener("click", ()=>{
