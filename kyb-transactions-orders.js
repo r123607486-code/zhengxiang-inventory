@@ -59,7 +59,7 @@ function openKybTxnModal(){
       <select id="kybTxnType"><option value="in">進貨</option><option value="out">銷貨</option></select>
     </div>
     <div class="form-row">
-      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桐／藍桐）</label>
       <input type="text" id="kybTxnItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="kybTxnItemList"></div>
     </div>
@@ -95,13 +95,15 @@ function openKybTxnModal(){
   document.getElementById("kybTxnType").addEventListener("change", refreshLocOptions);
 
   const searchInput = document.getElementById("kybTxnItemSearch");
+  document.getElementById("kybTxnType").addEventListener("change", ()=>{ if(searchInput.value) searchInput.dispatchEvent(new Event("input")); });
   searchInput.addEventListener("input", ()=>{
     const q = norm(searchInput.value);
     const listEl = document.getElementById("kybTxnItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
+    const outMode = document.getElementById("kybTxnType").value === "out";
     // 開頭符合 q 的排最前面，再取前 30 筆，避免符合太多筆時想找的那個被擠到清單外
     const matches = kybItemsCache
-      .filter(it=> norm(it.carModel).includes(q))
+      .filter(it=> norm(it.carModel).includes(q) && (!outMode || kybTotalQty(it)>0))
       .sort((a,b)=> (norm(a.carModel).startsWith(q)?0:1) - (norm(b.carModel).startsWith(q)?0:1))
       .slice(0,30);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
@@ -184,7 +186,7 @@ function openKybAdjustTxnModal(){
       <select id="kybAdjustSign"><option value="+">調正（增加庫存）</option><option value="-">調負（減少庫存）</option></select>
     </div>
     <div class="form-row">
-      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
+      <label>搜尋車型（找不到請確認避震款式，例如CRV可能同時有白桐／藍桐）</label>
       <input type="text" id="kybAdjustItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="kybAdjustItemList"></div>
     </div>
@@ -227,13 +229,15 @@ function openKybAdjustTxnModal(){
   document.getElementById("kybAdjustSign").addEventListener("change", refreshLocOptions);
 
   const searchInput = document.getElementById("kybAdjustItemSearch");
+  document.getElementById("kybAdjustSign").addEventListener("change", ()=>{ if(searchInput.value) searchInput.dispatchEvent(new Event("input")); });
   searchInput.addEventListener("input", ()=>{
     const q = norm(searchInput.value);
     const listEl = document.getElementById("kybAdjustItemList");
     if(!q){ listEl.classList.add("hidden"); return; }
+    const outMode = document.getElementById("kybAdjustSign").value === "-";
     // 開頭符合 q 的排最前面，再取前 30 筆，避免符合太多筆時想找的那個被擠到清單外
     const matches = kybItemsCache
-      .filter(it=> norm(it.carModel).includes(q))
+      .filter(it=> norm(it.carModel).includes(q) && (!outMode || kybTotalQty(it)>0))
       .sort((a,b)=> (norm(a.carModel).startsWith(q)?0:1) - (norm(b.carModel).startsWith(q)?0:1))
       .slice(0,30);
     listEl.innerHTML = matches.map(it=>`<div data-id="${it.id}">${escapeHtml(kybItemLabel(it))}</div>`).join("");
@@ -445,7 +449,7 @@ async function deleteKybTxn(txnId){
 }
 
 function openNewKybItemModal(){
-  const bucketOptions = ["白桶","藍桶","深藍桶"];
+  const bucketOptions = ["白桐","藍桐","深藍桐"];
   const html = `
     <div class="sheet-head"><h2>新增車型</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row"><label>車型</label><input type="text" id="newKybModel" placeholder="例如 Altis '19~"></div>
@@ -647,7 +651,7 @@ function openEditKybOrderModal(orderId){
   const html = `
     <div class="sheet-head"><h2>修改訂單</h2><button class="sheet-close" onclick="closeModal()">✕</button></div>
     <div class="form-row">
-      <label>搜尋車型（要換車型才需要，不換不用理它；找不到請確認避震款式，例如CRV可能同時有白桶／藍桶）</label>
+      <label>搜尋車型（要換車型才需要，不換不用理它；找不到請確認避震款式，例如CRV可能同時有白桐／藍桐）</label>
       <input type="text" id="editKybOrderItemSearch" placeholder="例如 Altis">
       <div class="autocomplete-list hidden" id="editKybOrderItemList"></div>
     </div>
