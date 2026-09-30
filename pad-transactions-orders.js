@@ -84,7 +84,8 @@ function buildPadItemSearch(searchId, listId, labelId, onSelect, filterInStockOn
     const q = norm(searchInput.value);
     const listEl = document.getElementById(listId);
     if(!q){ listEl.classList.add("hidden"); return; }
-    const qNoH=q.replace(/-/g,""); const matches = padItemsCache.filter(it=>{ const cm=norm(it.carModel),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); const hit = cm.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); if(!hit) return false; if(filterInStockOnly && padTotalQty(it)<=0) return false; return true; }).slice(0,15);
+    const shouldFilter = typeof filterInStockOnly === "function" ? filterInStockOnly() : filterInStockOnly;
+    const qNoH=q.replace(/-/g,""); const matches = padItemsCache.filter(it=>{ const cm=norm(it.carModel),sp=norm(it.spec||""),pf=norm(it.partNoFront||""),pr=norm(it.partNoRear||""); const hit = cm.includes(q)||sp.includes(q)||pf.includes(q)||pr.includes(q)||pf.replace(/-/g,"").includes(qNoH)||pr.replace(/-/g,"").includes(qNoH); if(!hit) return false; if(shouldFilter && padTotalQty(it)<=0) return false; return true; }).slice(0,15);
     listEl.innerHTML = matches.map(it=>{
       const pn = [it.partNoFront, it.partNoRear].filter(Boolean).join(" / ");
       return `<div data-id="${it.id}">${escapeHtml(padItemLabel(it))}${pn?` <span style="color:var(--muted);font-size:12px;">[${escapeHtml(pn)}]</span>`:"" }</div>`;
@@ -165,7 +166,7 @@ function openPadTxnModal(){
     selectedItemId = id;
     buildPadSideRow(it, "padTxnSide", "padTxnSideRow", refreshLocOptions);
     refreshLocOptions();
-  }, true);
+  }, ()=> document.getElementById("padTxnType").value === "out");
   document.getElementById("padTxnType").addEventListener("change", ()=>{
     const si = document.getElementById("padTxnItemSearch");
     if(si.value) si.dispatchEvent(new Event("input"));
@@ -296,7 +297,7 @@ function openPadAdjustTxnModal(){
     selectedItemId = id;
     buildPadSideRow(it, "padAdjustSide", "padAdjustSideRow", refreshLocOptions);
     refreshLocOptions();
-  }, true);
+  }, ()=> document.getElementById("padAdjustSign").value === "-");
   document.getElementById("padAdjustSign").addEventListener("change", ()=>{
     const si = document.getElementById("padAdjustItemSearch");
     if(si.value) si.dispatchEvent(new Event("input"));
