@@ -44,6 +44,12 @@
 | `tire-transactions-orders.js` | 輪胎：進銷貨管理、庫存校正、訂單管理、我的訂單 |
 | `kyb-inventory.js` | KYB：庫存查詢、庫存總表、儲位編輯、叫貨、匯出 |
 | `kyb-transactions-orders.js` | KYB：進銷貨管理、庫存校正、訂單管理、我的訂單 |
+| `pad-inventory.js` | YangPo來令片：庫存查詢、庫存總表、儲位編輯、叫貨、匯出 |
+| `pad-transactions-orders.js` | YangPo來令片：進銷貨管理、庫存校正、訂單管理、我的訂單 |
+| `pad-data-import.js` | YangPo來令片：資料匯入 |
+| `tein-inventory.js` | TEIN：庫存查詢、庫存總表、儲位編輯、叫貨、匯出 |
+| `tein-transactions-orders.js` | TEIN：進銷貨管理、庫存校正、訂單管理、我的訂單 |
+| `tein-data-import.js` | TEIN：資料匯入 |
 | `locations-users.js` | 儲位管理、使用者管理 |
 | `data-import.js` | 資料匯入 |
 | `backup-restore.js` | 備份還原 |
